@@ -102,8 +102,9 @@ def run_bot(config_path: Path, stop_on_eof: bool = False) -> int:
     jumper = Repeater(game, ("Up", "Right"), settings.jump_interval_ms, "jumper")
     runner = Runner(game, settings, jumper, state_path(config_path))
     install_stop_signals()
-    if stop_on_eof:  # the window's "Check game settings now" arrives as a line
-        stop_on_stdin_eof(sys.stdin, commands={"check-settings": runner.settings_request.set})
+    if stop_on_eof:  # the window's "Check game settings now" and "Buy now" arrive as lines
+        stop_on_stdin_eof(sys.stdin, commands={"check-settings": runner.settings_request.set,
+                                                "buy-now": runner.buy_request.set})
     recorder = None
     if settings.blackbox_fps:
         # It stops when this pipe closes: here, or by the OS if this process is killed outright.

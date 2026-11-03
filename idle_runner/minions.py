@@ -6,8 +6,10 @@ ascending (wiki). The original's "claim all /
 send all" clicks land on the Daily Bonus banner, and its trigger, yellow at (99, 113), is the Ascension
 button's glow (it glows while ascending is "Recommended"), not minions coming back.
 """
+import numpy as np
+
 from idle_runner.actions import TAB_SELECTED, open_ascension_tab
-from idle_runner.ascend_bonus import sp_amount
+from idle_runner.ascend_bonus import _classify, sp_amount
 from idle_runner.config import Settings
 from idle_runner.game import Game, Point
 from idle_runner.game_settings import _bands
@@ -25,6 +27,17 @@ HEADER_DIGITS = (0xA6, 0x75, 0xFE)  # the header's "N available"
 BUTTON_LEFT, BUTTON_RIGHT = 410, 436
 LIST_TOP, LIST_BOTTOM = 136, 659    # the list between the header and the tab bar (client y 105-628)
 BUTTON_HEIGHT = 120                 # a whole button shows 123 px of its colour (client y 222-344)
+# With the tree's "The Chosen One" (Santi, 2026-11-03) each row has an orange Prestige button above a shorter one:
+# "+N" Divinity Points for resetting that minion's level (the panel's Divinities tab adds them up as "Prestige
+# Minions"). Never clicked. The button under it shows 67-68 px of colour, ~15 px below the box (live 00:11).
+PRESTIGE = (0xF8, 0x8F, 0x00)
+PRESTIGE_BUTTON_HEIGHT = 64
+# Each claim floats "N earned / Ascend to claim them" up over the rows above for ~2.4 s (live 2026-11-03): a button
+# under it isn't whole, so on 10-30 a send and a claim went unseen.
+EARNED_TEXT_MS = 2500
+# "241 M available": a suffixed amount. The game wrote 9,482,458 in full (tree header 2026-10-30), so a suffixed one is
+# more, far over any mission cost the bot reads (3,000 at most).
+SUFFIXED_SP_MIN = 9_482_458
 MAX_STEPS = 20                      # clicks and page turns: five minions need up to 10 clicks and 2 turns
 # The list's scrollbar at client x 606 (2026-10-28, five minions): track A0A0A0, thumb BFBFBF, client y 111-625.
 # With two or three minions there is no scrollbar.
@@ -55,9 +68,30 @@ def mission_ms(cost: int, settings: Settings) -> float | None:
 
 
 def read_available_sp(game: Game) -> int | None:
-    """The unspent SP in the panel's header ("21,048 available"), or None."""
+    """The unspent SP in the panel's header ("21,048 available"); SUFFIXED_SP_MIN for "241 M"; or None."""
     band = game.grab(28, 59, 638, 88)  # client x 20-629, y 28-57
-    return sp_amount((band == HEADER_DIGITS).all(axis=2), band)
+    mask = (band == HEADER_DIGITS).all(axis=2)
+    amount = sp_amount(mask, band)
+    return SUFFIXED_SP_MIN if amount is None and suffixed(mask) else amount
+
+
+def suffixed(mask: np.ndarray) -> bool:
+    """Digits, a wide gap (13 px; 3-4 between digits) and a full-height glyph that isn't one: "241 M" (2026-11-03)."""
+    columns = np.concatenate(([0], mask.any(axis=0).astype(int), [0]))
+    edges = np.flatnonzero(np.diff(columns))
+    starts, ends = edges[::2], edges[1::2]
+    glyphs = [trim(mask[:, a:b]) for a, b in zip(starts, ends)]
+    for i in range(1, len(glyphs)):
+        if starts[i] - ends[i - 1] >= 8:
+            digits = [_classify(g) for g in glyphs[:i] if g.shape[0] > 6]  # "." and "," are short
+            return (bool(digits) and all(d is not None and d.isdigit() for d in digits)
+                    and glyphs[i].shape[0] >= 14 and _classify(glyphs[i]) is None)
+    return False
+
+
+def trim(glyph: np.ndarray) -> np.ndarray:
+    rows = np.flatnonzero(glyph.any(axis=1))
+    return glyph[rows[0]:rows[-1] + 1]
 
 
 def read_mission_cost(game: Game, top: int) -> int | None:
@@ -86,19 +120,29 @@ def read_mission_cost(game: Game, top: int) -> int | None:
     return None
 
 
-def send_buttons(game: Game, color: tuple[int, int, int] = SEND) -> list[int]:
-    """The top edges of the send buttons (or of buttons of `color`) wholly inside the list, from the top."""
-    column = (game.grab(BUTTON_LEFT, LIST_TOP, BUTTON_RIGHT, LIST_BOTTOM) == color).all(axis=2).any(axis=1)
-    tops, y = [], 0
+def buttons(game: Game, color: tuple[int, int, int] = SEND) -> list[tuple[int, int]]:
+    """(top edge, height) of the send buttons (or of buttons of `color`) wholly inside the list, from the top:
+    123 px of colour, or 67 under a Prestige box."""
+    band = game.grab(BUTTON_LEFT, LIST_TOP, BUTTON_RIGHT, LIST_BOTTOM)
+    column = (band == color).all(axis=2).any(axis=1)
+    prestige = (band == PRESTIGE).all(axis=2).any(axis=1)
+    found, y = [], 0
     while y < len(column):
         if column[y]:
             start = y
             while y < len(column) and column[y]:
                 y += 1
-            if y - start >= BUTTON_HEIGHT:
-                tops.append(LIST_TOP + start)
+            height = y - start
+            under_prestige = prestige[max(start - 20, 0):start].any()
+            if height >= BUTTON_HEIGHT or (height >= PRESTIGE_BUTTON_HEIGHT and under_prestige):
+                found.append((LIST_TOP + start, height))
         y += 1
-    return tops
+    return found
+
+
+def send_buttons(game: Game, color: tuple[int, int, int] = SEND) -> list[int]:
+    """The top edges of the send buttons (or of buttons of `color`) wholly inside the list, from the top."""
+    return [top for top, _ in buttons(game, color)]
 
 
 def daily_bonus_shown(game: Game) -> bool:
@@ -194,9 +238,10 @@ def send_minions(game: Game) -> tuple[list[int], bool]:
     noted: set[int | None] = set()  # costs already logged as not sent: pages overlap
     away, bonus = False, False  # a minion on a mission seen; the Daily Bonus taken
     for _ in range(MAX_STEPS):
-        claims = send_buttons(game, CLAIM)
+        claims = buttons(game, CLAIM)
         if claims:
-            game.click(522, claims[0] + 62)  # the button's middle
+            top, height = claims[0]
+            game.click(522, top + height // 2)  # the button's middle
             deadline = game.now() + 2000
             while len(send_buttons(game, CLAIM)) >= len(claims):
                 if game.now() > deadline:
@@ -206,6 +251,7 @@ def send_minions(game: Game) -> tuple[list[int], bool]:
                     return sent, False
                 game.sleep(50)
             event("Minion claimed")
+            game.sleep(EARNED_TEXT_MS)
             continue
         available = read_available_sp(game)
         if available is None:
@@ -213,7 +259,8 @@ def send_minions(game: Game) -> tuple[list[int], bool]:
             game.save_frame("minions-sp-unreadable")
             break
         away = away or bool(send_buttons(game, AWAY))
-        costs = [(top, read_mission_cost(game, top)) for top in send_buttons(game)]
+        heights = dict(buttons(game))
+        costs = [(top, read_mission_cost(game, top)) for top in heights]
         affordable = [(top, cost) for top, cost in costs if cost is not None and cost <= available]
         if not affordable:
             for top, cost in costs:
@@ -232,9 +279,11 @@ def send_minions(game: Game) -> tuple[list[int], bool]:
                 break
             continue
         top, cost = affordable[0]
-        game.click(522, top + 62)  # the button's middle
+        game.click(522, top + heights[top] // 2)  # the button's middle
         deadline = game.now() + 2000
-        while read_available_sp(game) != available - cost:
+        # It went: the SP dropped by the cost, or ("241 M" doesn't move) the button turned "On a Mission...". A jewel
+        # offer for missing SP does neither.
+        while read_available_sp(game) != available - cost and top not in send_buttons(game, AWAY):
             if game.now() > deadline:
                 event("Minion not sent", reason="no effect", cost=cost)
                 game.save_frame("minion-send-no-effect")

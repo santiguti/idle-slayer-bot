@@ -138,7 +138,7 @@ La primera vez que el bot pulsa una tecla, KDE Plasma en Wayland pregunta si lo 
 | | |
 |---|---|
 | 👀 **Siempre atento** | Busca Mega Hordas, Cacerías de Cofres, misiones y cajas plateadas todo el tiempo, sin puntos ciegos. |
-| 🎯 **Fácil de controlar** | Juega mientras el juego está activo. Cambia de ventana para pausarlo y vuelve para seguir. Sin atajos de teclado y sin robar el foco. |
+| 🎯 **Fácil de controlar** | Juega mientras el juego está activo. Cambia de ventana para pausarlo y vuelve para seguir. Sin atajos de teclado y sin robar el foco. **Comprar ahora** lo manda a la tienda en el momento. |
 | 🛡️ **Ascensiones seguras** | Nunca hace clic en el botón **Ultra Ascender**: confirma en un lugar seguro, y solo cuando aparece el diálogo de confirmación. Nunca usa Ultra Ascender. |
 | ♻️ **Preparado para la Ultra Ascensión** | Maneja el juego después de una Ultra Ascensión: una tienda sin la pestaña Misiones, sin la pestaña de súbditos y con un solo botón Ascender. |
 | 🔧 **Nunca se traba** | Una pantalla que no aparece queda registrada con una captura y se saltea. Después de 5 errores seguidos se detiene de forma segura. |

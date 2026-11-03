@@ -432,3 +432,11 @@ def test_a_red_modal_is_told_by_its_button_text_in_english_and_spanish(game, fak
     fake.frame[:] = read_png(FIXTURES / f"{frame}.png")
 
     assert Tree(game, ()).modal() == state
+
+
+def test_a_tooltip_that_reaches_past_the_panel_is_read(game, fake) -> None:
+    """Giant Horde (client 489, 301), 2026-10-30 13:36: the tooltip runs out of the panel to client x 783, past its
+    edge (x 639). Read only up to that edge, its SP icon was cut off: "cost not read" for Giant Horde, Ramen and Stew
+    on every tree visit that day."""
+    fake.frame[200:400, 480:800] = read_png(FIXTURES / "giant-horde-tooltip.png")
+    assert Tree(game, RECOMMENDED_ORDER).read_tooltip(*NODES["Giant Horde"].point) == "not enough"

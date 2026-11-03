@@ -182,3 +182,23 @@ def test_the_language_setting_shows_names_and_saves_codes(window, tmp_path) -> N
 
     assert app.settings_page.save()
     assert 'language = "es"' in (tmp_path / "config.toml").read_text(encoding="utf-8")
+
+
+def test_buy_now_asks_the_running_bot(window, monkeypatch) -> None:
+    import io
+    app = window()
+    stdin = io.StringIO()
+    monkeypatch.setattr(app.bot, "process", type("P", (), {"stdin": stdin, "poll": lambda self: None})())
+
+    app.buy_button.invoke()
+
+    assert stdin.getvalue() == "buy-now\n"
+    assert "few seconds" in app.feed[-1][2]
+
+
+def test_buy_now_with_the_bot_stopped_says_so(window) -> None:
+    app = window()
+
+    app.buy_button.invoke()
+
+    assert "Start" in app.feed[-1][2]

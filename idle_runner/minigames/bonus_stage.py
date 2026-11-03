@@ -39,6 +39,9 @@ S2_SYNC = (767, 631, 767, 631, 0x151515)
 S2_SYNC_ALSO = (508, 631, 0x151515)
 S3_SYNC = (151, 465, 220, 465, 0xCFBCB8)
 S4_SYNC = (250, 472, 100, 250, 0x0D2030)
+# The run's shop button: the stage is over (bonus_stage waits for it at the end too). A section that runs out of time
+# after Second Wind ends the stage with no fail screen (live 2026-11-02 15:46).
+RUN_SHOP = (1130, 604, 0x989898)
 
 S2_MOVES: Moves = (
     (156, 719), (47, 687), (360, 1390), (485, 344), (406, 749), (78, 600), (94, 900), (109, 954),
@@ -179,14 +182,15 @@ def run_bs2(game: Game, sb: bool) -> None:
         elif not retried and take_second_wind(game, tag):
             retried = True
         else:
-            stage_fail(game, 2)
+            if not stage_fail(game, 2):
+                event(f"{tag} Over", section=number)  # it ended with no fail screen
             return
 
 
 def bs2_section(game: Game, section: Bs2Section, label: str) -> bool:
     """Play one section; False if it ended on the fail screen."""
-    def failed() -> bool:
-        return game.pixel_is(716, 600, 0xAF0000)
+    def failed() -> bool:  # the fail screen, or the stage already over
+        return game.pixel_is(716, 600, 0xAF0000) or game.pixel_is(*RUN_SHOP)
 
     game.find_until(*section.sync, label=label, also=section.sync_also)  # the original carries on regardless
     game.sleep(section.sync_sleep)

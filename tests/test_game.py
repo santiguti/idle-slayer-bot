@@ -182,3 +182,13 @@ def test_no_button_when_another_window_is_under_the_pointer(game, fake, events, 
 
     assert not [a for a in fake.actions if a[0] in ("button", "click")]
     assert [r["event"] for r in events()].count("click_outside_window") == 1
+
+
+def test_quiet_pixel_search_logs_only_hits(game, fake, caplog) -> None:
+    """The main loop's fast checks run ~25 times a second: logging their misses rotated 50 MB in 2 hours (10-30)."""
+    fake.paint(385, 280, 0x140C1C)
+    with caplog.at_level(logging.DEBUG, logger=log.name):
+        assert game.pixel_is(385, 280, 0x140C1C, quiet=True)
+        assert not game.pixel_is(650, 36, 0xCA9700, quiet=True)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("pixel_search")]
+    assert len(lines) == 1 and lines[0].startswith("pixel_search (385,280,")

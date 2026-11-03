@@ -141,6 +141,9 @@ de bonus de MpS, o cada 30 minutos como máximo (Configuración, Ascensión)."""
     "The bot checks Idle Slayer's own settings at the first Start of each day.":
         "El bot revisa los ajustes de Idle Slayer en el primer inicio de cada día.",
     "Check game settings now": "Revisar los ajustes del juego ahora",
+    "Buy now": "Comprar ahora",
+    "The bot buys at its next check, in a few seconds.": "El bot compra en su próximo chequeo, en unos segundos.",
+    "Start the bot first: it buys while it runs.": "Primero inicia el bot: compra mientras está en marcha.",
     "{problem}. These are the defaults; changing a setting saves them over {file}.":
         "{problem}. Estos son los valores por defecto; al cambiar uno se guardan sobre {file}.",
     "“{label}” must be a number, not {value}": "“{label}” tiene que ser un número, no {value}",

@@ -233,6 +233,8 @@ class App:
         self.game_label.pack(side="left")
         self.start_button = ttk.Button(head, text=t("Start"), style="Start.TButton", command=self.start_or_stop)
         self.start_button.pack(side="right", anchor="n")
+        self.buy_button = ttk.Button(head, text=t("Buy now"), command=self.buy_now)  # a shop visit at the next check
+        self.buy_button.pack(side="right", anchor="s", padx=12)
         self.restart_bar = ttk.Frame(page)
         ttk.Label(self.restart_bar, text=t("Settings changed. Restart the bot to use them."),
                   style="Warning.TLabel").pack(side="left")
@@ -441,6 +443,15 @@ class App:
         folder = mark(self.log_dir, text)
         self.note.delete(0, "end")
         self.add(time.time(), "state", t("Marked: {text} (saved in {folder})", text=text, folder=folder))
+        self.refresh()
+
+    def buy_now(self) -> None:
+        """Ask the running bot to visit the shop at its next slow check, as its timer would."""
+        if self.bot.send("buy-now"):
+            text = t("The bot buys at its next check, in a few seconds.")
+        else:
+            text = t("Start the bot first: it buys while it runs.")
+        self.add(time.time(), "state", text)
         self.refresh()
 
     def show_stats(self) -> None:

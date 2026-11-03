@@ -32,6 +32,22 @@ SIX_COIN_TIMEOUT_MS = 120_000  # buy anyway if the counter stays unreadable this
 MINIONS_EVERY_MS = 60 * 60_000  # while no mission end is known (missions sent by hand or before a restart)
 MINIONS_MARGIN_MS = 60_000  # look a minute after a mission should end
 MAX_CONSECUTIVE_CRASHES = 5  # unexpected errors in a row before giving up (e.g. the game window is gone)
+# "MEGA HORDE INCOMING!" (measured 2026-11-02 on 76 hordes recorded 10-29/30). The original's single pixel, the M's
+# left edge, also matches the Ascension and Minions panels (open or closing) and other banners ("Time added to Coin
+# Value Multiplier!"): 232 of 395 rages on Linux came less than 1 s after a panel routine. The text bobs from 9 px up
+# to 25 px down, so the right edge of its "!" (client x 895) gives its height, and the top edges of its letters must
+# then all be the outline: 0 false matches in 296 other frames.
+HORDE_OUTLINE = 0x140C1C
+HORDE_BANG = (903, 255, 903, 325)  # client x 895, y 224-294
+HORDE_TOPS = (388, 414, 455, 488, 528, 568, 609, 648, 688, 730, 768, 810, 851, 892)  # on the "!"'s top row
+RAGE_HOLDOFF_MS = 5_000  # one rage per horde: its text shows ~1 s, ~20 loops (each tapped R before)
+
+
+def megahorde_shown(game: Game) -> bool:
+    if not game.pixel_is(385, 280, HORDE_OUTLINE, quiet=True):  # the original's check, now only the first
+        return False
+    bang = game.pixel_search(*HORDE_BANG, HORDE_OUTLINE, quiet=True)  # an open panel matches the first every loop
+    return bang is not None and all(game.pixel_is(x, bang[1], HORDE_OUTLINE, quiet=True) for x in HORDE_TOPS)
 
 
 def install_stop_signals() -> None:
@@ -54,6 +70,7 @@ class Runner:
         self.minions_due = True  # once at start too: the node may have been bought by hand
         self.settings_due = True  # the in-game settings the bot needs, at the first start of the day
         self.settings_request = threading.Event()  # set by the window's "Check game settings now"
+        self.buy_request = threading.Event()  # set by the window's "Buy now" (Heldof's request, 2026-10-29)
         now = game.now()
         self.timer_minions = now
         self.minions_back: list[float] = []  # when the missions the bot sent end
@@ -63,6 +80,7 @@ class Runner:
         self.timer_bonus_sample = now
         self.buy_minutes: float = settings.auto_buy_minutes  # $iAutoBuyTempTimer
         self.portal_count = settings.circle_portals_count
+        self.last_rage = -RAGE_HOLDOFF_MS  # when the last horde was raged at
         # The original unticks these after one use; with a read-only config they apply once per run.
         self.dimensional_pending = settings.craft_dimensional_staff
         self.bidimensional_pending = settings.craft_bidimensional_staff
@@ -149,20 +167,21 @@ class Runner:
         # --- fast checks ---
         # Silver box. Its button pulses B78800 -> F8BB00 about once a second; the original's exact CA9700 is
         # one of ~107 shades and never matched in 14 minutes on 2026-10-28. ±16 covers ~40% of each pulse.
-        if g.pixel_search(650, 36, 650, 36, 0xCA9700, variation=16):
+        if g.pixel_search(650, 36, 650, 36, 0xCA9700, variation=16, quiet=True):
             event("Silver Box Collected")
             g.click(644, 49)
-        if g.pixel_is(385, 280, 0x140C1C):  # megahorde
+        if g.now() - self.last_rage >= RAGE_HOLDOFF_MS and megahorde_shown(g):
+            self.last_rage = g.now()
             self._routine("rage_when_horde", self.rage_when_horde)
         # A quest can be claimed: the shop button pulses 989898 -> CFCF46. The original matches CBCB4C
         # exactly, one ~7 ms frame at 144 FPS; ±16 covers ~160 ms of each pulse (measured 2026-10-22).
-        if g.pixel_search(1130, 610, 1130, 610, 0xCBCB4C, variation=16):
+        if g.pixel_search(1130, 610, 1130, 610, 0xCBCB4C, variation=16, quiet=True):
             self._routine("claim_quests", self.shop.claim_quests)
         if soul_bonus_active(g):  # rage during soul bonus
             g.tap("r")
         # Chest hunt. Every coin has the original's two colours 7 px apart (a false start on 2026-10-28), so
         # also ask for the first chest's dark outline at (180, 296), seen in all 62 recorded chest hunts.
-        if (g.pixel_is(187, 296, 0xFFBB31) and g.pixel_is(187, 303, 0xF68F37)
+        if (g.pixel_is(187, 296, 0xFFBB31, quiet=True) and g.pixel_is(187, 303, 0xF68F37)
                 and g.pixel_is(180, 296, 0x151515)):
             self._routine("chest_hunt", lambda: chest_hunt(
                 g, s.no_lockpicking, s.perfect_chest_hunt, s.no_reinforced_crystal_saver))
@@ -197,7 +216,11 @@ class Runner:
             if s.circle_portals and portal_ready(g):
                 self._routine("circle_portals", lambda: take_portal(g, self.portal_count))
                 self.portal_count = self.portal_count % 9 + 1
-            if s.auto_buy_upgrades and g.now() - self.timer_buy > self.buy_minutes * 60_000:
+            if self.buy_request.is_set():  # not in the original: even with auto_buy_upgrades off
+                self.buy_request.clear()
+                self.timer_buy = g.now()
+                self.buy()
+            elif s.auto_buy_upgrades and g.now() - self.timer_buy > self.buy_minutes * 60_000:
                 self.timer_buy = g.now()
                 self.buy_minutes = min(self.buy_minutes * 2, s.auto_buy_minutes)
                 self.buy()

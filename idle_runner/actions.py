@@ -40,7 +40,7 @@ def box_on_screen(game: Game) -> bool:
 
 
 def soul_bonus_active(game: Game) -> bool:
-    return game.pixel_search(625, 143, 629, 214, SOUL_BONUS) is not None
+    return game.pixel_search(625, 143, 629, 214, SOUL_BONUS, quiet=True) is not None  # checked every loop
 
 
 def buy_temp_item(game: Game, color: int) -> None:

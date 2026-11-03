@@ -238,8 +238,9 @@ class Tree:
         return None
 
     def read_tooltip(self, x: int, y: int) -> str | None:
-        # x 647, y 31 and 750: the panel's right edge and the client area's top and bottom
-        region = self.game.grab(x + 43, max(y - 170, 31), min(x + 343, 647), min(y + 170, 750))
+        # y 31 and 750: the client area's top and bottom. The tooltip may run out of the panel (Giant Horde's reaches
+        # client x 783, 2026-10-30): cut at the panel's edge (x 647), its SP icon was lost and the cost never read.
+        region = self.game.grab(x + 43, max(y - 170, 31), x + 343, min(y + 170, 750))
         background = (region == TOOLTIP_BG).all(axis=2)
         if not background.any():
             return None

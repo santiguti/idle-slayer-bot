@@ -208,3 +208,17 @@ def test_bonus_stage_1_is_skipped_and_its_second_wind_declined(game, fake, event
     fake.on_action = fail_screen_after_the_swipe
     assert bonus_stage(game, skip=skip) == 1
     assert "BonusStage1 Failed" in event_names() and (560, 600) not in fake.clicks()
+
+
+def test_bs2_stops_when_the_stage_ended_without_a_fail_screen(game, fake, event_names) -> None:
+    """2026-11-02 15:46: the rerun of section 2 ran out of time at a wall and the stage ended with no fail screen
+    (Second Wind already taken); the bot counted section 2 complete, waited 15 s for sections 3 and 4 each and
+    played their jumps blind in the run. The run's shop button (1130, 604) 989898 shows the stage is over."""
+    for x, y, color in ((220, 465, 0xCFBCB8), (767, 631, 0x151515), (508, 631, 0x151515), (200, 400, 0x0D2030)):
+        fake.paint(x, y, color)  # every section's sync marker, so the test doesn't wait out timeouts
+    fake.paint(1130, 604, 0x989898)  # back in the run
+    run_bs2(game, sb=False)
+
+    names = event_names()
+    assert "BonusStage2 Section 1 Complete" not in names and "BonusStage2 Over" in names
+    assert (716, 600) not in fake.clicks()

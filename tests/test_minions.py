@@ -5,8 +5,8 @@ import pytest
 
 from idle_runner import minions
 from idle_runner.config import Settings
-from idle_runner.minions import (daily_bonus_shown, mission_ms, read_available_sp, read_mission_cost, send_buttons,
-                                 send_minions)
+from idle_runner.minions import (AWAY, CLAIM, EARNED_TEXT_MS, SUFFIXED_SP_MIN, buttons, daily_bonus_shown, mission_ms,
+                                 read_available_sp, read_mission_cost, send_buttons, send_minions)
 from tests.fakes import OFFSET, read_png
 
 FIXTURES = Path(__file__).parent / "fixtures" / "minions"
@@ -401,3 +401,77 @@ def test_the_daily_bonus_waits_while_no_minion_is_away(game, fake, monkeypatch) 
     fake.on_action = with_banner
     assert send_minions(game) == ([], False)
     assert (328, 191) not in fake.clicks()
+
+
+# With the tree's "The Chosen One" each row has an orange Prestige box ("+N" Divinity Points) above a 67 px button
+# (live 2026-11-03 00:11, five minions, 241 M SP): the Dark Wizard's button top in these frames, AutoIt y.
+PRESTIGE_ROW = 396 + 31
+
+
+def test_finds_whole_buttons_under_the_prestige_boxes(game, fake) -> None:
+    show_panel(fake, "prestige-claim")  # Dark Wizard back; the top row is cut off by the header
+    assert buttons(game, CLAIM) == [(PRESTIGE_ROW, 67)]
+    assert send_buttons(game, AWAY) == [246 + 31, 546 + 31]
+
+
+def test_reads_the_cost_of_a_send_button_under_a_prestige_box(game, fake) -> None:
+    show_panel(fake, "prestige-send-150")
+    assert send_buttons(game) == [PRESTIGE_ROW]
+    assert read_mission_cost(game, PRESTIGE_ROW) == 150
+
+
+@pytest.mark.parametrize("name", ["prestige-claim", "prestige-send-150", "prestige-away"])
+def test_a_suffixed_sp_header_reads_as_its_lower_bound(game, fake, name: str) -> None:
+    """ "241 M available": the game writes up to at least 9,482,458 in full (tree header 2026-10-30)."""
+    show_panel(fake, name)
+    assert read_available_sp(game) == SUFFIXED_SP_MIN
+
+
+def prestige_tab(fake) -> list[tuple[int, int]]:
+    """The Minions tab with the Prestige boxes: the Dark Wizard back from its mission; a claim turns its button into
+    "Send on Mission (-150 SP)" and puts the "earned" text over the rows above for EARNED_TEXT_MS, a send turns it
+    "On a Mission...". The header says "241 M" all along. Returns the clicks with the time they came."""
+    clicks: list[tuple[int, int]] = []
+    shown = {"until": 0.0}
+
+    def act(action: tuple) -> None:
+        if action[0] != "click":
+            return
+        click = (action[1] + OFFSET[0], action[2] + OFFSET[1])
+        clicks.append((click[1], fake.t))
+        if click == (95, 90):
+            fake.paint(538, 681, 0xAD1111)
+            fake.paint(260, 480, 0x58188D)
+        elif click == (332, 680):
+            show_panel(fake, "prestige-claim")
+            fake.paint(332, 676, 0x5E261B)  # the tab pulses gold while a claim waits: its dark end
+        elif 423 <= click[0] <= 621 and PRESTIGE_ROW <= click[1] < PRESTIGE_ROW + 67:
+            if fake.t < shown["until"]:
+                return  # the text over the list: nothing should be clicked meanwhile
+            if fake.frame[PRESTIGE_ROW - 31, 402][1] == 0xA6:  # the claim
+                show_panel(fake, "prestige-earned-text")
+                shown["until"] = fake.t + EARNED_TEXT_MS - 100
+            else:
+                show_panel(fake, "prestige-away")
+
+    def tick(action: tuple) -> None:
+        if shown["until"] and fake.t >= shown["until"]:
+            show_panel(fake, "prestige-send-150")
+            shown["until"] = 0.0
+        act(action)
+
+    fake.on_action = tick
+    return clicks
+
+
+def test_claims_and_sends_a_minion_under_a_prestige_box(game, fake, event_names) -> None:
+    clicks = prestige_tab(fake)
+    sent, _ = send_minions(game)
+
+    names = event_names()
+    assert "Minion claimed" in names and sent == [150]
+    row = [(y, t) for y, t in clicks if PRESTIGE_ROW <= y < PRESTIGE_ROW + 67]
+    assert [y for y, _ in row] == [PRESTIGE_ROW + 33, PRESTIGE_ROW + 33]  # the claim, then the send, in the middle
+    assert row[1][1] - row[0][1] >= EARNED_TEXT_MS  # after the "earned" text went
+    assert not [y for y, _ in clicks if PRESTIGE_ROW - 55 <= y < PRESTIGE_ROW - 15]  # never the Prestige box
+

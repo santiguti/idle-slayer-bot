@@ -77,16 +77,18 @@ class Game:
 
     # --- screen ---
     def pixel_search(self, left: int, top: int, right: int, bottom: int, color: int,
-                     variation: int = 0) -> Point | None:
+                     variation: int = 0, quiet: bool = False) -> Point | None:
         """AutoIt PixelSearch.
 
         Returns the first pixel whose RGB channels are each within `variation` of `color`.
         Like AutoIt, it walks column by column (left to right), each column top to bottom;
         `left > right` or `top > bottom` reverses that direction. Bounds are inclusive and
-        clipped to the client area.
+        clipped to the client area. `quiet` logs only a hit: for checks the main loop makes many times a second.
         """
         found = self._search(left, top, right, bottom, color, variation)
-        log.debug("pixel_search (%d,%d,%d,%d) 0x%06X v%d -> %s", left, top, right, bottom, color, variation, found)
+        if found or not quiet:
+            log.debug("pixel_search (%d,%d,%d,%d) 0x%06X v%d -> %s",
+                      left, top, right, bottom, color, variation, found)
         return found
 
     def _search(self, left: int, top: int, right: int, bottom: int, color: int, variation: int) -> Point | None:
@@ -120,8 +122,8 @@ class Game:
         """RGB pixels of an AutoIt rectangle, bounds inclusive (for reading text such as the coins)."""
         return self.backend.grab(left - self.ox, top - self.oy, right - left + 1, bottom - top + 1)
 
-    def pixel_is(self, x: int, y: int, color: int) -> bool:
-        return self.pixel_search(x, y, x, y, color) is not None
+    def pixel_is(self, x: int, y: int, color: int, quiet: bool = False) -> bool:
+        return self.pixel_search(x, y, x, y, color, quiet=quiet) is not None
 
     def find_until(self, left: int, top: int, right: int, bottom: int, color: int,
                    timeout_ms: float = 15_000, label: str | None = None,

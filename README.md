@@ -135,7 +135,7 @@ The first time the bot presses a key, KDE Plasma on Wayland asks whether to allo
 | | |
 |---|---|
 | 👀 **Always watching** | Checks for Megahordes, chest hunts, quests and silver boxes all the time, with no blind spots. |
-| 🎯 **Easy to control** | Plays while the game is focused. Switch windows to pause it, come back to resume. No hotkeys, no focus stealing. |
+| 🎯 **Easy to control** | Plays while the game is focused. Switch windows to pause it, come back to resume. No hotkeys, no focus stealing. **Buy now** sends it to the shop at once. |
 | 🛡️ **Safe ascending** | Never clicks the **Ultra Ascend** button: it confirms on a safe spot, and only once the "Are you sure?" dialog is up. It never Ultra Ascends. |
 | ♻️ **Ultra Ascension aware** | Handles the game after an Ultra Ascension: a shop without the Quests tab, no Minions tab, a single Ascend button. |
 | 🔧 **Never gets stuck** | A screen that never shows up is logged with a screenshot and skipped. After 5 errors in a row it stops safely. |

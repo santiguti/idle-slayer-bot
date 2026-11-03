@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.4.1 (2026-11-03)
+
+### New
+- **"Buy now" button.** On the dashboard, next to Start: the running bot visits the shop at its next check (within 5 seconds), even with automatic buying off. Asked for by a tester on SteamOS.
+
+### Fixed
+- **Rage wasted when no Megahorde was there.** The bot recognised a Megahorde by one dark pixel of its "MEGA HORDE INCOMING!" text, and the Ascension and Minions panels (open or closing) and other banners have that same pixel: on Linux more than half of the rages came right after the bot closed a panel, and Rage then had its 10 minute cooldown when a real Megahorde came. The bot now checks the whole line of text, wherever it bobs to, and presses R once per Megahorde instead of about 20 times.
+- **Tree nodes on the right of the tree never bought ("cost not read").** Their description pops up partly outside the panel, and the bot only read it up to the panel's edge, where the cost's SP icon was cut off. Giant Horde, Ramen and Stew stopped every tree run.
+- **Bonus Stage 2 played blind after it was over.** When a section failed again after Second Wind, the stage ended without a fail screen; the bot took the section as complete, waited for the next ones and pressed their jumps in the normal run for about a minute and a half. It now sees the run's shop button and stops.
+- **Minions stopped being claimed and sent once the tree's "The Chosen One" was bought.** It puts an orange Prestige button above every minion's button and makes that button shorter, and the bot only knew the tall one. It now handles both layouts and never touches the Prestige button. It also reads an SP header like "241 M available", and waits for the "N earned" text that each claim floats over the list before it reads the next button (on one visit it covered a minion that was then neither sent nor claimed).
+- **The debug log only kept about two hours.** The checks the bot makes many times a second logged every miss; now only what they find is logged.
+
 ## v2.3.0 (2026-10-28)
 
 ### New

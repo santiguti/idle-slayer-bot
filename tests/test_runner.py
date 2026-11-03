@@ -1,5 +1,6 @@
 import signal
 import time
+from pathlib import Path
 from dataclasses import replace
 from datetime import date
 
@@ -11,10 +12,17 @@ from idle_runner.config import Settings
 from idle_runner.game import Game
 from idle_runner.log import log
 from idle_runner.state import load_state, update_state
-from idle_runner.runner import (BOX_RETRY_MS, MAX_CONSECUTIVE_CRASHES, SIX_COIN_TIMEOUT_MS, WINDOW_RETRY_MS, Runner,
-                                 install_stop_signals)
+from idle_runner.runner import (BOX_RETRY_MS, MAX_CONSECUTIVE_CRASHES, RAGE_HOLDOFF_MS, SIX_COIN_TIMEOUT_MS,
+                                 WINDOW_RETRY_MS, Runner, install_stop_signals, megahorde_shown)
 from idle_runner.game import GameUnavailable, WindowGone
-from tests.fakes import OFFSET, FakeBackend
+from tests.fakes import OFFSET, FakeBackend, read_png
+
+MEGAHORDE = Path(__file__).parent / "fixtures" / "megahorde"
+
+
+def show(fake: FakeBackend, name: str) -> None:
+    """A recorded frame's middle (tests/fixtures/megahorde: client x 360-919, y 190-309)."""
+    fake.frame[190:310, 360:920] = read_png(MEGAHORDE / f"{name}.png")
 
 
 def test_silver_box_is_collected(game, fake, jumper, event_names) -> None:
@@ -48,7 +56,7 @@ def test_unfocused_game_gets_no_input_and_pause_is_logged_once(game, fake, jumpe
 
 
 def test_megahorde_with_soul_bonus_crafts_and_rages(game, fake, jumper, event_names) -> None:
-    fake.paint(385, 280, 0x140C1C)  # megahorde
+    show(fake, "horde")
     fake.paint(627, 150, 0xA86D0A)  # soul bonus
     Runner(game, replace(Settings(), craft_rage_pill=True), jumper).tick()
 
@@ -60,14 +68,49 @@ def test_megahorde_with_soul_bonus_crafts_and_rages(game, fake, jumper, event_na
 
 
 def test_no_rage_without_soul_bonus_when_disabled(game, fake, jumper) -> None:
-    fake.paint(385, 280, 0x140C1C)
+    show(fake, "horde")
     Runner(game, replace(Settings(), disable_rage_without_soul_bonus=True), jumper).tick()
 
     assert "r" not in fake.taps()
 
 
+@pytest.mark.parametrize("name", ["horde", "horde-low"])
+def test_megahorde_is_seen_on_a_recorded_horde(game, fake, name) -> None:
+    show(fake, name)  # "horde-low": the text 13 px lower, it bobs
+    assert megahorde_shown(game)
+
+
+@pytest.mark.parametrize("name", ["ascension-panel", "minions-panel-closing", "coin-banner"])
+def test_panels_and_other_banners_are_not_a_megahorde(game, fake, name) -> None:
+    """All three have the original's 140C1C at (385, 280): 232 of 395 rages on Linux (10-29/30) came from a panel."""
+    show(fake, name)
+    assert game.pixel_is(385, 280, 0x140C1C)
+    assert not megahorde_shown(game)
+
+
+def test_rage_once_per_megahorde(game, fake, jumper, event_names) -> None:
+    show(fake, "horde")
+    runner = Runner(game, Settings(), jumper)
+    for _ in range(20):  # the text shows about 1 s: ~20 loops
+        runner.tick()
+    assert fake.taps().count("r") == 1 and event_names().count("MegaHorde Rage") == 1
+
+    fake.t += RAGE_HOLDOFF_MS
+    runner.tick()
+    assert fake.taps().count("r") == 2
+
+
+def test_a_horde_right_after_a_panel_still_rages(game, fake, jumper) -> None:
+    runner = Runner(game, Settings(), jumper)
+    show(fake, "ascension-panel")
+    runner.tick()
+    show(fake, "horde")
+    runner.tick()
+    assert fake.taps().count("r") == 1
+
+
 def test_dimensional_staff_is_crafted_once_per_run(game, fake, jumper, event_names) -> None:
-    fake.paint(385, 280, 0x140C1C)
+    show(fake, "horde")
     runner = Runner(game, replace(Settings(), craft_dimensional_staff=True), jumper)
     runner.tick()
     runner.tick()
@@ -685,3 +728,44 @@ def test_check_game_settings_now_while_the_bot_runs(game, fake, jumper, monkeypa
     fake.t += 5_000
     runner.tick()
     assert len(checks) == 2 and not runner.settings_request.is_set()
+
+
+def test_buy_now_runs_auto_upgrade_at_the_next_slow_check(game, fake, jumper, monkeypatch) -> None:
+    """The window's "Buy now" (Heldof, 2026-10-29): a buy at the next slow check, then the timer counts from it."""
+    runner = Runner(game, replace(Settings(), auto_buy_upgrades=False), jumper)  # no timed buys
+    buys = []
+    monkeypatch.setattr(runner, "buy", lambda: buys.append(fake.t))
+    fake.t += 6_000
+    runner.tick()
+    runner.last_slow = fake.t  # the start's checks (settings, minions) take seconds of the clock
+    runner.buy_request.set()
+    fake.t += 1_000
+    runner.tick()  # only at the slow check
+    assert buys == []
+
+    fake.t += 5_000
+    runner.tick()
+    assert len(buys) == 1 and not runner.buy_request.is_set() and runner.timer_buy == buys[0]
+
+
+def test_buy_now_works_with_auto_buy_off(game, fake, jumper, monkeypatch) -> None:
+    runner = Runner(game, replace(Settings(), auto_buy_upgrades=False), jumper)
+    buys = []
+    monkeypatch.setattr(runner, "buy", lambda: buys.append(fake.t))
+    runner.buy_request.set()
+    fake.t += 6_000
+    runner.tick()
+    assert len(buys) == 1
+
+
+def test_buy_now_waits_for_a_minigame(game, fake, jumper, monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(runner_module, "bonus_stage", lambda g, skip: calls.append("bonus stage"))
+    fake.paint(660, 254, 0xFFE737)
+    fake.paint(638, 236, 0xFFBB31)
+    runner = Runner(game, Settings(), jumper)
+    monkeypatch.setattr(runner, "buy", lambda: calls.append("buy"))
+    runner.buy_request.set()
+    fake.t += 6_000
+    runner.tick()
+    assert calls == ["bonus stage", "buy"]
