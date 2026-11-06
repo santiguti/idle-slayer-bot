@@ -858,3 +858,23 @@ def test_claim_quests_stops_for_a_floating_box(game, fake, event_names) -> None:
     assert (1160, 300) not in fake.clicks()
     assert "Shopping stopped for a Random Box" in event_names()
     assert fake.clicks()[-1] == (1244, 712)  # closed the shop so the player can jump
+
+
+def test_buy_upgrade_waits_for_the_list_to_settle_at_the_top(game, fake) -> None:
+    """2026-11-06 00:21:26: 0.4 s after the wheel the list was still bouncing back to the top, no separator in
+    y 153-170, and the first row (Chaos Necklace) was taken for cut off and left for a later round (18 of 192 visits)."""
+    show_tab(fake, "upgrades")
+    paint_rows(fake, ["buy", "red"], first_separator=175)  # bounced past the top
+    real_grab = fake.grab
+
+    def grab(x: int, y: int, w: int, h: int):
+        if fake.t >= 700:
+            paint_rows(fake, ["buy", "red"])  # settled
+        return real_grab(x, y, w, h)
+
+    fake.grab = grab
+    shop = Shop(game)
+    shop.loop_amount = 6
+    shop.buy_upgrade()
+
+    assert (1180, 170) in fake.clicks()

@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from idle_runner.minigames.bonus_stage import (BS2_SECTIONS, bonus_stage, bs2_section, bs3_section1, run_bs2, run_bs3,
-                                               stage_number)
+import idle_runner.minigames.bonus_stage as bonus_stage_module
+from idle_runner.minigames.bonus_stage import (BS2_SECTIONS, BS2_SB_SECTIONS, bonus_stage, bs2_section, bs3_section1,
+                                               run_bs2, run_bs3, stage_number)
 from idle_runner.minigames.common import slider_showing
 from tests.fakes import read_png
 
@@ -222,3 +223,121 @@ def test_bs2_stops_when_the_stage_ended_without_a_fail_screen(game, fake, event_
     names = event_names()
     assert "BonusStage2 Section 1 Complete" not in names and "BonusStage2 Over" in names
     assert (716, 600) not in fake.clicks()
+
+
+SYNC_MARKERS = ((220, 465, 0xCFBCB8), (767, 631, 0x151515), (508, 631, 0x151515), (200, 400, 0x0D2030))
+
+
+def key_downs(fake) -> list[float]:
+    """Virtual times of every Up press, recorded through on_action."""
+    times: list[float] = []
+    fake.on_action = lambda action: times.append(fake.t) if action == ("key", "Up", True) else None
+    return times
+
+
+def running(fake) -> None:
+    """Make the terrain move: every sleep scrolls the frame, like a player who isn't stuck."""
+    sleep = fake.sleep_ms
+
+    def scrolling_sleep(ms: float) -> None:
+        sleep(ms)
+        fake.frame[150:700, 300:] = 0x80 if fake.frame[400, 640, 0] == 0x40 else 0x40  # never a sync colour
+    fake.sleep_ms = scrolling_sleep
+
+
+def test_s2_jumps_at_once_when_the_player_is_stuck_at_a_wall(game, fake, event_names) -> None:
+    """2026-11-05: section 2's timer (29.3 s from "Go!") ran out while the player stood 5-7 s against its walls,
+    waiting for the next timed jump. A still camera means stuck: the next jump goes now."""
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    presses = key_downs(fake)
+    bs2_section(game, BS2_SECTIONS[1], "BonusStage2-s2")  # the frame never moves: always stuck
+
+    first, second = presses[0], presses[1]
+    assert second - first < 156 + 719 - 100  # the original waits 156 + 719 ms
+    assert second - first >= 156 + 300 + 300  # 300 ms after the release, then 300 ms of a still camera
+    assert "Bonus stage stuck" in event_names()
+
+
+def test_s2_keeps_the_original_pauses_while_the_player_runs(game, fake) -> None:
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    running(fake)
+    presses = key_downs(fake)
+    bs2_section(game, BS2_SECTIONS[1], "BonusStage2-s2")
+
+    assert presses[1] - presses[0] >= 156 + 719
+
+
+@pytest.mark.parametrize("index", [0, 2, 3])
+def test_the_other_sections_keep_the_original_pauses(game, fake, index: int) -> None:
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    presses = key_downs(fake)
+    bs2_section(game, BS2_SECTIONS[index], f"BonusStage2-s{index + 1}")
+
+    press, post = BS2_SECTIONS[index].moves[0]
+    assert presses[1] - presses[0] >= press + post
+
+
+def test_spirit_boost_s2_jumps_early_too() -> None:
+    assert BS2_SB_SECTIONS[1].moves == BS2_SECTIONS[1].moves and BS2_SB_SECTIONS[1].cut_stalls
+
+
+def test_after_second_wind_a_still_player_is_nudged_until_the_sync(game, fake, event_names) -> None:
+    """2026-11-05: after Second Wind the section restarts with "3, 2, 1, Go!" and the player stands still until a
+    key comes: the sync waited 15 s for a pit that never came, and the blind jumps started 10 s late."""
+    sleep = fake.sleep_ms
+
+    def player_starts(ms: float) -> None:
+        sleep(ms)
+        if fake.t > 4_000 and any(a == ("key", "Up", True) for a in fake.actions):
+            for x, y, color in SYNC_MARKERS:  # once nudged, the player runs to the pits
+                fake.paint(x, y, color)
+    fake.sleep_ms = player_starts
+    bs2_section(game, BS2_SECTIONS[1], "BonusStage2-s2", nudge=True)
+
+    names = event_names()
+    assert "Bonus stage nudge" in names and "Sync timeout" not in names
+
+
+def test_no_nudge_while_the_player_runs(game, fake, event_names) -> None:
+    running(fake)
+    bs2_section(game, BS2_SECTIONS[1], "BonusStage2-s2", nudge=True)
+
+    assert "Bonus stage nudge" not in event_names() and "Sync timeout" in event_names()
+
+
+def test_every_section_but_the_first_is_nudged(game, fake, monkeypatch) -> None:
+    # The player waits for a key after Second Wind, and at a section's start once the last section's
+    # closing taps are over: S2 cut its stalls, ended 2.6 s early and S3 stood for 15 s (2026-11-06 00:18).
+    nudges: list[bool] = []
+    outcomes = iter([True, False, True, True, True])  # section 2 fails once
+
+    def section(game, section, label, nudge=False) -> bool:
+        nudges.append(nudge)
+        return next(outcomes)
+    monkeypatch.setattr(bonus_stage_module, "bs2_section", section)
+    fake.paint(615, 590, 0x00A400)  # Second Wind offered
+    run_bs2(game, sb=False)
+
+    assert nudges == [False, True, True, True, True]
+
+
+def test_a_player_standing_among_spinning_orbs_is_nudged(game, fake, event_names) -> None:
+    """S3's start on 2026-11-06 00:18: the orbs around the standing player change the picture by ~2 every
+    other look (0.2 in between), above the stuck threshold of 1.5, so no nudge came in 15 s."""
+    sleep = fake.sleep_ms
+    flicker = iter([0x404040, 0x424242] * 1000)
+
+    def orbs_spin(ms: float) -> None:
+        sleep(ms)
+        fake.paint(308, 181, next(flicker), w=980, h=551)
+        if any(a == ("key", "Up", True) for a in fake.actions):
+            for x, y, color in SYNC_MARKERS:  # once nudged, the player runs to the pits
+                fake.paint(x, y, color)
+    fake.sleep_ms = orbs_spin
+    bs2_section(game, BS2_SECTIONS[1], "BonusStage2-s2", nudge=True)
+
+    names = event_names()
+    assert "Bonus stage nudge" in names and "Sync timeout" not in names

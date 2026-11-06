@@ -267,6 +267,9 @@ class Shop:
         g.move(1254, 172)  # over the scrollbar
         scroll_to_top(g, 1254, 167, "buy_upgrade")
         g.sleep(400)
+        # Not in the original: 0.4 s after the wheel the list can still be bouncing back to the top. The first row
+        # then looked cut off and was left for a later round (18 of 192 visits, 2026-11-05/06).
+        g.find_until(1180, 170, 1180, FIRST_SEPARATOR_Y, 0x000000, timeout_ms=1000)
         bought = False
         y = first_row_after_quest_rewards(g)
         deadline = g.now() + STUCK_MS

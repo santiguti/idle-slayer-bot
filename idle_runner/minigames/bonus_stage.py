@@ -7,6 +7,8 @@ function-per-section like the original.
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import numpy as np
+
 from idle_runner.game import STUCK_MS, Game
 from idle_runner.log import event
 from idle_runner.minigames.common import slide_until, slider_showing
@@ -23,6 +25,7 @@ class Bs2Section:
     collect_hold: tuple[int, int] | None  # cSend() before the collection taps
     collect_taps: int                     # Send("{Up}") + Sleep(500), repeated
     sync_also: tuple[int, int, int] | None = None  # a pixel (x, y, color) the sync also waits for
+    cut_stalls: bool = False              # jump at once when the player is stuck (see STILL_AREA)
 
 
 # The original waits for the first stone block's light edge at the single pixel (220, 465). That
@@ -43,6 +46,22 @@ S4_SYNC = (250, 472, 100, 250, 0x0D2030)
 # after Second Wind ends the stage with no fail screen (live 2026-11-02 15:46).
 RUN_SHOP = (1130, 604, 0x989898)
 
+# Not in the original (measured 2026-11-05, `logs/recordings/2026-11-05-bs2/`). Section 2 has a fixed timer, 29.3 s
+# from "Go!" (27.3 s left at its sync), and its jumps take 29.6 s: the player stood 5-7 s against walls waiting for
+# the next timed jump and the time ran out at the last wall. A still camera means stuck, so the next jump goes at
+# once. Terrain right of the player (client x >= 300), every 4th pixel: the mean change between two looks 50 ms
+# apart is >= 2.0 while running (median ~12) and ~0.2 while stuck. Standing among orbs, their spin gives ~2 every
+# other look (S3's start, 2026-11-06); 2.5 finds the same walls as 1.5 in the four recorded S2s.
+STILL_AREA = (308, 181, 1287, 731)
+STILL_CHANGE = 2.5
+STUCK_LOOKS = 6  # still for 300 ms: a landing against a step pauses the camera up to 0.25 s (5 of 5 recorded),
+#                  a wall until the next jump comes (0.35-2 s, 15 of 15)
+STUCK_AFTER_MS = 300  # after a jump's release: a jump in place mustn't count as stuck
+# After Second Wind the section restarts with "3, 2, 1, Go!" and the player stands still until a key comes (15 s
+# sync timeouts on 2026-11-05; the S3/S4 sync timeouts after a rerun since 11-02 look the same).
+NUDGE_AFTER_MS = 500
+SYNC_MS = 15_000
+
 S2_MOVES: Moves = (
     (156, 719), (47, 687), (360, 1390), (485, 344), (406, 749), (78, 600), (94, 900), (109, 954),
     (31, 672), (515, 1344), (484, 297), (406, 749), (78, 600), (94, 900), (109, 954), (31, 672),
@@ -54,7 +73,7 @@ BS2_SECTIONS = (
         (94, 1640), (32, 1218), (94, 600), (109, 1828), (63, 640), (47, 688), (78, 1906),
         (141, 1625), (47, 3187), (47, 734), (47, 750), (78, 1203), (110, 5000),
     ), True, (40, 5000), 17),
-    Bs2Section(S2_SYNC, 0, S2_MOVES, True, (350, 1000), 20, S2_SYNC_ALSO),
+    Bs2Section(S2_SYNC, 0, S2_MOVES, True, (350, 1000), 20, S2_SYNC_ALSO, cut_stalls=True),
     Bs2Section(S3_SYNC, 0,
                ((109, 1203), (31, 641), (47, 1578), (47, 2437)) * 3 + ((109, 1203), (31, 641), (47, 5125)),
                True, (900, 200), 20),
@@ -69,7 +88,7 @@ BS2_SB_SECTIONS = (
     Bs2Section(S1_SYNC, 200,
                ((94, 1640), (47, 2072), (187, 688), (31, 672), (31, 1700)) * 2 + ((94, 5000),),
                True, (40, 2500), 19),
-    Bs2Section(S2_SYNC, 0, S2_MOVES, True, (350, 1000), 20, S2_SYNC_ALSO),
+    Bs2Section(S2_SYNC, 0, S2_MOVES, True, (350, 1000), 20, S2_SYNC_ALSO, cut_stalls=True),
     Bs2Section(S3_SYNC, 0,
                ((109, 1203), (31, 641), (47, 1200), (1, 3100)) * 3 + ((109, 1203), (31, 641), (47, 5125)),
                True, (900, 200), 20),
@@ -87,6 +106,70 @@ BS2_SB_SECTIONS = (
 def holds(game: Game, moves: Moves) -> None:
     for press_ms, post_ms in moves:
         game.hold(press_ms, post_ms)
+
+
+class Camera:
+    """Tells whether the terrain stopped moving since the last look."""
+
+    def __init__(self, game: Game) -> None:
+        self.game = game
+        self.last: np.ndarray | None = None
+
+    def still(self) -> bool:
+        now = self.game.grab(*STILL_AREA)[::4, ::4].astype(np.int16)
+        still = self.last is not None and float(np.abs(now - self.last).mean()) < STILL_CHANGE
+        self.last = now
+        return still
+
+
+def wait_unless_stuck(game: Game, ms: float) -> bool:
+    """Sleep `ms` (after a jump), or less if the player gets stuck; True if cut short."""
+    deadline = game.now() + ms
+    game.sleep(min(STUCK_AFTER_MS, ms))
+    camera, streak = Camera(game), 0
+    while (left := deadline - game.now()) > 0:
+        streak = streak + 1 if camera.still() else 0
+        if streak >= STUCK_LOOKS:
+            return True
+        game.sleep(min(50, left))
+    return False
+
+
+def holds_unless_stuck(game: Game, moves: Moves, label: str) -> None:
+    saved, early = 0.0, 0
+    for press_ms, post_ms in moves:
+        game.hold(press_ms)
+        start = game.now()
+        if wait_unless_stuck(game, post_ms):
+            early += 1
+            saved += post_ms - (game.now() - start)
+    event("Bonus stage stuck", where=label, early_jumps=early, saved_ms=round(saved))
+
+
+def sync(game: Game, section: Bs2Section, label: str, nudge: bool) -> None:
+    """Wait for the section's marker; with `nudge`, press Up while the player stands still."""
+    if not nudge:
+        game.find_until(*section.sync, label=label, also=section.sync_also)  # the original carries on regardless
+        return
+    camera, still_since = Camera(game), None
+    deadline = game.now() + SYNC_MS
+    while game.now() < deadline:
+        found = game.pixel_search(*section.sync, quiet=True)
+        if found and section.sync_also:
+            found = game.pixel_search(*section.sync_also[:2], *section.sync_also[:2], section.sync_also[2], quiet=True)
+        if found:
+            return
+        if not camera.still():
+            still_since = None
+        elif still_since is None:
+            still_since = game.now()
+        elif game.now() - still_since >= NUDGE_AFTER_MS:
+            game.tap("Up")
+            event("Bonus stage nudge", where=label)
+            still_since = None
+        game.sleep(50)
+    event("Sync timeout", where=label, timeout_ms=SYNC_MS)
+    game.save_frame(f"sync-{label}")
 
 
 def take_second_wind(game: Game, tag: str) -> bool:
@@ -176,7 +259,9 @@ def run_bs2(game: Game, sb: bool) -> None:
     retried = False
     number = 1
     while number <= len(sections):
-        if bs2_section(game, sections[number - 1], f"{tag}-s{number}"):
+        # The player waits for a key after Second Wind, and when it reaches a section before the last
+        # section's closing taps are over (S2 ends sooner since it cuts its stalls).
+        if bs2_section(game, sections[number - 1], f"{tag}-s{number}", nudge=retried or number > 1):
             event(f"{tag} Section {number} Complete")
             number += 1
         elif not retried and take_second_wind(game, tag):
@@ -187,14 +272,17 @@ def run_bs2(game: Game, sb: bool) -> None:
             return
 
 
-def bs2_section(game: Game, section: Bs2Section, label: str) -> bool:
-    """Play one section; False if it ended on the fail screen."""
+def bs2_section(game: Game, section: Bs2Section, label: str, nudge: bool = False) -> bool:
+    """Play one section; False if it ended on the fail screen. `nudge`: the player may be waiting for a key."""
     def failed() -> bool:  # the fail screen, or the stage already over
         return game.pixel_is(716, 600, 0xAF0000) or game.pixel_is(*RUN_SHOP)
 
-    game.find_until(*section.sync, label=label, also=section.sync_also)  # the original carries on regardless
+    sync(game, section, label, nudge)
     game.sleep(section.sync_sleep)
-    holds(game, section.moves)
+    if section.cut_stalls:
+        holds_unless_stuck(game, section.moves, label)
+    else:
+        holds(game, section.moves)
     if section.fail_check_before_collect and failed():
         return False
     if section.collect_hold:

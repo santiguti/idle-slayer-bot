@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.5.0 (2026-11-06)
+
+### New
+- **The bot beats Victor.** Tested live on 2026-11-05: it won in 187 seconds with all 5 hearts left. What changed:
+  - **It keeps shooting in the second stage.** The original stops shooting when Victor's second-stage dialog shows, but arrows still hurt him there, so the bot dodged everything until the timeout and did no damage.
+  - **It dodges comets that Victor charges after teleporting to the left.** It now watches for the white charge-up glow anywhere in front of the character and times the dodge from where the glow is.
+  - **It jumps the flame pillars when they are close, in both colours** (magenta and dark red), and holds the jump longer so the character clears them.
+  - **It knows when the fight is lost** (all hearts empty) instead of waiting for the timeout. It also waits 400 seconds instead of 200 before giving up, because the second stage alone can take longer than 200.
+
+### Fixed
+- **Bonus Stage 2's second section ran out of time.** The section has a fixed timer, and the original's jumps take longer than it, because the character stands against each wall until the next timed jump. When the character is stuck against a wall, the bot now jumps at once.
+- **The character stood still after Second Wind and at the start of a section.** In both cases the game waits for a key before the character runs, so the bot waited 15 seconds for a marker that never came and then jumped blind. It now presses Up when the screen stays still while it waits.
+- **The first upgrade in the shop was sometimes left for a later visit.** Half a second after scrolling to the top, the list could still be bouncing, and the first row looked cut off. This happened in about 1 in 10 visits. The bot now waits for the list to settle.
+
 ## v2.4.1 (2026-11-03)
 
 ### New
