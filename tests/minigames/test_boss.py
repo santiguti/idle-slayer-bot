@@ -110,7 +110,7 @@ def test_victor_battle_does_not_log_every_miss(game, fake, logs) -> None:
     fake.cost_ms = 200
     victor_battle(game, FakeShooter())
 
-    assert "pixel_search (919" not in (logs / "idle_runner.log").read_text()
+    assert "pixel_search (919" not in (logs / "idle_runner.log").read_text(encoding="utf-8")
 
 
 def paint_charge(fake, left: int, top: int, width: int = 64, height: int = 100) -> None:
