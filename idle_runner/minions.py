@@ -6,9 +6,11 @@ ascending (wiki). The original's "claim all /
 send all" clicks land on the Daily Bonus banner, and its trigger, yellow at (99, 113), is the Ascension
 button's glow (it glows while ascending is "Recommended"), not minions coming back.
 """
+from typing import NamedTuple
+
 import numpy as np
 
-from idle_runner.actions import TAB_SELECTED, open_ascension_tab
+from idle_runner.actions import TAB_SELECTED, box_beside_panel, open_ascension_tab
 from idle_runner.ascend_bonus import _classify, sp_amount
 from idle_runner.config import Settings
 from idle_runner.game import Game, Point
@@ -35,6 +37,8 @@ PRESTIGE_BUTTON_HEIGHT = 64
 # Each claim floats "N earned / Ascend to claim them" up over the rows above for ~2.4 s (live 2026-11-03): a button
 # under it isn't whole, so on 10-30 a send and a claim went unseen.
 EARNED_TEXT_MS = 2500
+# How often that wait looks for a Random Box beside the panel: one shows there for ~3 s (actions.box_beside_panel).
+BOX_POLL_MS = 250
 # "241 M available": a suffixed amount. The game wrote 9,482,458 in full (tree header 2026-10-30), so a suffixed one is
 # more, far over any mission cost the bot reads (3,000 at most).
 SUFFIXED_SP_MIN = 9_482_458
@@ -205,19 +209,39 @@ def minions_shown(game: Game) -> bool:
     return False
 
 
-def send_minions(game: Game) -> tuple[list[int], bool]:
+class Visit(NamedTuple):
+    """What a visit to the Minions tab did."""
+    sent: list[int]    # the costs of the missions sent: they tell when each one ends
+    bonus: bool        # the Daily Bonus was taken: every mission out ends 3 hours sooner
+    box: bool = False  # cut short by a Random Box: to be made again once the jumper has it
+
+
+def box_came(game: Game, wait_ms: float = 0) -> bool:
+    """Whether a Random Box shows beside the panel, looking every BOX_POLL_MS for `wait_ms` (just once when 0).
+    Not in the original: the jumper waits while the panel is open, so the visit makes way for the box (live
+    2026-11-12 00:36: a box floated past the open Minions tab and was lost)."""
+    deadline = game.now() + wait_ms
+    while not box_beside_panel(game):
+        if game.now() >= deadline:
+            return False
+        game.sleep(min(BOX_POLL_MS, deadline - game.now()))
+    event("Minions visit cut short", reason="Random Box")
+    return True
+
+
+def send_minions(game: Game) -> Visit:
     """Claim the minions back from their missions, then send every minion whose mission the unspent SP
     covers. Claims cost nothing; each send is checked against the header's SP:
     without enough, the game may offer to pay the rest with jewels (the tree did, 2026-10-26). The list
     moves when a minion leaves (the Daily Bonus banner above it changes), so the buttons are found again
     after each send. The list holds two or three whole buttons, so it is read from its top a page at a time
     (five minions on 2026-10-28: a claim cut off by the tab bar was never seen). Last the Daily Bonus, while a
-    minion is away: after the sends, so their new missions are shortened too. Returns the costs of the
-    missions sent and whether the Daily Bonus was taken (after them: they end 3 hours sooner)."""
+    minion is away: after the sends, so their new missions are shortened too. A Random Box beside the panel
+    ends the visit before its next step, so the jumper can get the box."""
     sent: list[int] = []
     if not open_ascension_tab(game):
         game.click(570, 694)  # exit
-        return sent, False
+        return Visit(sent, bonus=False)
     for attempt in range(2):
         if attempt:
             event("Shop click retried", target="minions")
@@ -231,13 +255,16 @@ def send_minions(game: Game) -> tuple[list[int], bool]:
             event("Minions buttons unknown")
             game.save_frame("minions-buttons-unknown")
         game.click(570, 694)  # exit
-        return sent, False
+        return Visit(sent, bonus=False)
     game.move(*LIST_POINTER)
     if thumb(game)[0]:
         scroll(game, up=True, notches=10)  # to the top: the list scrolls about 4.5 notches
     noted: set[int | None] = set()  # costs already logged as not sent: pages overlap
-    away, bonus = False, False  # a minion on a mission seen; the Daily Bonus taken
+    away, bonus, box = False, False, False  # a minion on a mission seen; the Daily Bonus taken; a box came
     for _ in range(MAX_STEPS):
+        if box_came(game):
+            box = True
+            break
         claims = buttons(game, CLAIM)
         if claims:
             top, height = claims[0]
@@ -248,10 +275,12 @@ def send_minions(game: Game) -> tuple[list[int], bool]:
                     event("Minion not claimed")
                     game.save_frame("minion-claim-no-effect")
                     game.click(570, 694)  # exit
-                    return sent, False
+                    return Visit(sent, bonus=False)
                 game.sleep(50)
             event("Minion claimed")
-            game.sleep(EARNED_TEXT_MS)
+            if box_came(game, EARNED_TEXT_MS):  # the "N earned" text floats over the list meanwhile
+                box = True
+                break
             continue
         available = read_available_sp(game)
         if available is None:
@@ -288,9 +317,9 @@ def send_minions(game: Game) -> tuple[list[int], bool]:
                 event("Minion not sent", reason="no effect", cost=cost)
                 game.save_frame("minion-send-no-effect")
                 game.click(570, 694)  # exit
-                return sent, False
+                return Visit(sent, bonus=False)
             game.sleep(50)
         event("Minion sent", cost=cost)
         sent.append(cost)
     game.click(570, 694)  # exit
-    return sent, bonus
+    return Visit(sent, bonus, box)

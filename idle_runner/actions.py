@@ -34,7 +34,21 @@ def box_on_screen(game: Game) -> bool:
     bonus ("Silver Box Collected") sends 5 of them in a row. The orange one carries a sword and was
     found in the 2026-10-23 recording (its sword has 51 slate pixels, below the silver threshold).
     """
-    region = game.grab(8, 131, 797, 510)  # client (0, 100)-(789, 479)
+    return _box_in(game.grab(8, 131, 797, 510))  # client (0, 100)-(789, 479)
+
+
+def box_beside_panel(game: Game) -> bool:
+    """A Random Box floats in beside the open ascension panel (client x 0-639), where the run still shows. Not in
+    the original. A box crosses the screen right to left at ~210 px/s (live 2026-11-12: client x 770 -> 145 in
+    3.0 s), so it shows here for ~3 s before it goes behind the panel. Over the 2,607 frames recorded on
+    2026-11-12 this strip matched only boxes and the open shop (its quest "Hit 20 Random Boxes" has the box's
+    icon). The shop can stay open under the panel after a routine stopped by a focus loss (00:45:42), so with
+    the shop open only the run between the two is searched."""
+    shop_open = game.pixel_search(807, 140, 807, 155, 0xFFFFFF, quiet=True) is not None  # its corner (open_shop)
+    return _box_in(game.grab(648, 131, 797 if shop_open else 1287, 510))  # client (640, 100)-(789 or 1279, 479)
+
+
+def _box_in(region: np.ndarray) -> bool:
     return (int((region == BOX_SLATE).all(axis=2).sum()) >= MIN_BOX_PIXELS
             or int((region == BOX_ORANGE).all(axis=2).sum()) >= MIN_ORANGE_BOX_PIXELS)
 

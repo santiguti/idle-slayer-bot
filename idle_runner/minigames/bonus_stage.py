@@ -62,6 +62,27 @@ STUCK_AFTER_MS = 300  # after a jump's release: a jump in place mustn't count as
 NUDGE_AFTER_MS = 500
 SYNC_MS = 15_000
 
+# Not in the original (Santi, 2026-11-12: "Estamos matando los duendes con la espada en vez de con el arco"). Once a
+# section's orbs are in, "Section Completed Flawlessly!" shows at the top (client x 342-933, y 41-79: 6,314 white
+# pixels in all 132 frames of the BS2 recorded on 2026-11-12) until the next section's countdown, and 5-10 s after
+# it shows comes the reward: coins and a line of Soul Goblins (12, 48, 48 and 60 a section, wiki). The collection's
+# taps, one per 500 ms, hopped over most of them (7 of 48 killed in S2, the sword got those). So once the section's
+# jumps are over, while the banner is up: Up every SHOOT_MS, a jump and then arrows while airborne (wiki: "fire arrows
+# by jumping again while in the air"), like Victor's shooter. Never before the jumps are over: the terrain goes on
+# after the orbs are in, and from the banner on the shooting flew the player up against S2's last wall, as high as
+# the section, for 26 s (01:19:31). The banner is told by either end: "Section C" (client x 342-480) has 1,431 white
+# pixels and "awlessly!" (x 790-933) 1,682; in the 8,008 frames recorded without it, at most 743 and 35. A "Quest
+# Completed!" toast slides in from the right over the banner's middle (01:12:02), never over both ends: read in the
+# middle, one look found no banner, the shooting ended and the next section took that banner as its own. So the
+# shooting ends only once the banner has been gone REWARD_GONE_MS, and a section only takes a banner after a look
+# without one.
+REWARD_BAND = (350, 72, 941, 110)   # AutoIt: client (342, 41)-(933, 79)
+REWARD_ENDS = ((0, 139), (448, 592))  # columns of the band: "Section C", "awlessly!"
+REWARD_WHITE_MIN = 1200
+REWARD_GONE_MS = 500
+SHOOT_MS = 50
+REWARD_MAX_MS = 30_000
+
 S2_MOVES: Moves = (
     (156, 719), (47, 687), (360, 1390), (485, 344), (406, 749), (78, 600), (94, 900), (109, 954),
     (31, 672), (515, 1344), (484, 297), (406, 749), (78, 600), (94, 900), (109, 954), (31, 672),
@@ -122,6 +143,26 @@ class Camera:
         return still
 
 
+def reward_shown(game: Game) -> bool:
+    """The section's "Section Completed Flawlessly!" banner is up: its orbs are in (see REWARD_BAND)."""
+    white = (game.grab(*REWARD_BAND) == 255).all(axis=2)
+    return any(int(white[:, left:right].sum()) >= REWARD_WHITE_MIN for left, right in REWARD_ENDS)
+
+
+class Banner:
+    """A section's own reward banner: one only counts after a look without any, as the last section's may still be
+    up when this one starts (01:12:02, see REWARD_BAND)."""
+
+    def __init__(self, game: Game) -> None:
+        self.game = game
+        self.armed = False
+
+    def came(self) -> bool:
+        shown = reward_shown(self.game)
+        self.armed = self.armed or not shown
+        return shown and self.armed
+
+
 def wait_unless_stuck(game: Game, ms: float) -> bool:
     """Sleep `ms` (after a jump), or less if the player gets stuck; True if cut short."""
     deadline = game.now() + ms
@@ -144,6 +185,37 @@ def holds_unless_stuck(game: Game, moves: Moves, label: str) -> None:
             early += 1
             saved += post_ms - (game.now() - start)
     event("Bonus stage stuck", where=label, early_jumps=early, saved_ms=round(saved))
+
+
+def bs2_collect(game: Game, section: Bs2Section, banner: Banner) -> bool:
+    """The original's closing jumps: a cSend(), then Send("{Up}") + Sleep(500) each. True as soon as the section's
+    reward banner is up before a tap: the taps make way for the shooting."""
+    if section.collect_hold:
+        game.hold(*section.collect_hold)
+    for _ in range(section.collect_taps):
+        if banner.came():
+            return True
+        game.tap("Up")
+        game.sleep(500)
+    return False
+
+
+def shoot_through_reward(game: Game, label: str) -> None:
+    """Shoot the reward's Soul Goblins with the bow (see REWARD_BAND): Up every SHOOT_MS until the banner has given
+    way to the next section's countdown for REWARD_GONE_MS, the stage is over (the run's shop button) or
+    REWARD_MAX_MS pass."""
+    event("Bonus stage reward", where=label)
+    deadline = game.now() + REWARD_MAX_MS
+    gone_since: float | None = None
+    while game.now() < deadline and not game.pixel_is(*RUN_SHOP, quiet=True):
+        if reward_shown(game):
+            gone_since = None
+        elif gone_since is None:
+            gone_since = game.now()
+        elif game.now() - gone_since >= REWARD_GONE_MS:
+            return
+        game.tap("Up")
+        game.sleep(SHOOT_MS - 10)  # the tap itself takes 10 ms
 
 
 def sync(game: Game, section: Bs2Section, label: str, nudge: bool) -> None:
@@ -279,17 +351,17 @@ def bs2_section(game: Game, section: Bs2Section, label: str, nudge: bool = False
 
     sync(game, section, label, nudge)
     game.sleep(section.sync_sleep)
+    banner = Banner(game)
+    banner.came()  # a look at the start: the last section's banner, if still up, isn't this one's
     if section.cut_stalls:
         holds_unless_stuck(game, section.moves, label)
     else:
         holds(game, section.moves)
     if section.fail_check_before_collect and failed():
         return False
-    if section.collect_hold:
-        game.hold(*section.collect_hold)
-    for _ in range(section.collect_taps):
-        game.tap("Up")
-        game.sleep(500)
+    if bs2_collect(game, section, banner):
+        shoot_through_reward(game, label)
+        return True
     return not failed()
 
 

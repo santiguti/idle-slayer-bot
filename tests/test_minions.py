@@ -6,7 +6,7 @@ import pytest
 from idle_runner import minions
 from idle_runner.config import Settings
 from idle_runner.minions import (AWAY, CLAIM, EARNED_TEXT_MS, SUFFIXED_SP_MIN, buttons, daily_bonus_shown, mission_ms,
-                                 read_available_sp, read_mission_cost, send_buttons, send_minions)
+                                 read_available_sp, read_mission_cost, send_buttons, send_minions, Visit)
 from tests.fakes import OFFSET, read_png
 
 FIXTURES = Path(__file__).parent / "fixtures" / "minions"
@@ -84,7 +84,7 @@ def play_minions_tab(fake, monkeypatch, available: int | None, takes_effect: boo
 def test_sends_every_minion_the_sp_covers(game, fake, monkeypatch, event_names) -> None:
     sent = play_minions_tab(fake, monkeypatch, available=526)
 
-    assert send_minions(game) == ([10, 150], False)  # the costs it sent: they tell when each mission ends
+    assert send_minions(game) == Visit([10, 150], bonus=False)  # the costs it sent: they tell when each mission ends
     assert sent == [10, 150]
     assert event_names().count("Minion sent") == 2
     assert fake.clicks()[-1] == (570, 694)  # closed the panel
@@ -180,6 +180,49 @@ def test_claims_a_finished_mission_then_sends_the_minion_again(game, fake, monke
     assert len(knight_clicks) == 2  # the claim, then the send
     assert "Minion claimed" in event_names()
     assert sent == [10, 150]
+
+
+BOXES = Path(__file__).parent / "fixtures" / "boxes"
+
+
+def test_a_box_beside_the_panel_cuts_the_visit_short(game, fake, monkeypatch, event_names) -> None:
+    # Live 2026-11-12 00:36: a Random Box floated past the open Minions tab while the jumper waited, and was lost.
+    sent = play_minions_tab(fake, monkeypatch, available=526)
+    send_panel = fake.on_action
+
+    def act(action: tuple) -> None:
+        send_panel(action)
+        if sent == [10]:  # the White Knight went: a box flies in beside the panel
+            fake.frame[100:480, 640:1280] = read_png(BOXES / "beside-panel-silver.png")
+
+    fake.on_action = act
+
+    assert send_minions(game) == Visit([10], bonus=False, box=True)  # the White Knight's mission is still counted
+    assert sent == [10] and not [c for c in fake.clicks() if in_button(c, DARK_WIZARD)]
+    assert fake.clicks()[-1] == (570, 694)  # closed the panel: the jumper can get the box
+    assert "Minions visit cut short" in event_names()
+
+
+def test_a_box_during_the_earned_text_cuts_the_visit_short_at_once(game, fake, monkeypatch) -> None:
+    # The "N earned" wait is 2.5 s, most of the ~3 s a box shows beside the panel.
+    sent = finished_white_knight(fake, monkeypatch)
+    claim_panel = fake.on_action
+    claimed_at: list[float] = []
+
+    def act(action: tuple) -> None:
+        if action[0] == "click" and in_button((action[1] + OFFSET[0], action[2] + OFFSET[1]), WHITE_KNIGHT):
+            claimed_at.append(fake.t)
+        claim_panel(action)
+
+    fake.on_action = act
+    monkeypatch.setattr(minions, "box_beside_panel", lambda g: bool(claimed_at) and fake.t >= claimed_at[0] + 1000)
+
+    visit = send_minions(game)
+
+    assert visit.box and sent == []  # the White Knight was claimed, then the visit ended
+    closed_at = next(a for a in reversed(fake.actions) if a[0] == "click")
+    assert closed_at == ("click", 570 - 8, 694 - 31)
+    assert fake.t - claimed_at[0] < 1000 + 2 * minions.BOX_POLL_MS
 
 
 def test_a_claim_without_effect_is_not_clicked_again(game, fake, monkeypatch, event_names) -> None:
@@ -375,7 +418,7 @@ def play_daily_bonus(fake, takes_effect: bool = True) -> None:
 def test_takes_the_daily_bonus_after_sending_while_minions_are_away(game, fake, event_names) -> None:
     play_daily_bonus(fake)
 
-    assert send_minions(game) == ([], True)
+    assert send_minions(game) == Visit([], bonus=True)
     assert fake.clicks()[-2:] == [(328, 191), (570, 694)]  # the banner, then the panel's X
     assert "Minions daily bonus taken" in event_names()
 
@@ -383,7 +426,7 @@ def test_takes_the_daily_bonus_after_sending_while_minions_are_away(game, fake, 
 def test_a_daily_bonus_click_without_effect_is_reported(game, fake, event_names) -> None:
     play_daily_bonus(fake, takes_effect=False)
 
-    assert send_minions(game) == ([], False)
+    assert send_minions(game) == Visit([], bonus=False)
     assert fake.clicks().count((328, 191)) == 1
     assert "Minions daily bonus click had no effect" in event_names()
 
@@ -399,7 +442,7 @@ def test_the_daily_bonus_waits_while_no_minion_is_away(game, fake, monkeypatch) 
             fake.frame[108:211, :640] = read_png(FIXTURES / "daily-bonus.png")[108:211]
 
     fake.on_action = with_banner
-    assert send_minions(game) == ([], False)
+    assert send_minions(game) == Visit([], bonus=False)
     assert (328, 191) not in fake.clicks()
 
 
@@ -466,7 +509,7 @@ def prestige_tab(fake) -> list[tuple[int, int]]:
 
 def test_claims_and_sends_a_minion_under_a_prestige_box(game, fake, event_names) -> None:
     clicks = prestige_tab(fake)
-    sent, _ = send_minions(game)
+    sent = send_minions(game).sent
 
     names = event_names()
     assert "Minion claimed" in names and sent == [150]

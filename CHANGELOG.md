@@ -1,5 +1,19 @@
 # Changelog
 
+Versions follow [Semantic Versioning](https://semver.org), read from the player's side: a **major** version (3.0.0)
+needs something from you or drops something (a config that no longer loads, a platform), a **minor** version (2.6.0)
+adds something new (a feature, a setting, a minigame the bot plays differently), and a **patch** version (2.6.1) only
+fixes what was already there. From v2.6.0 on, every version below has a git tag with its name.
+
+## v2.6.0 (2026-11-12)
+
+### New
+- **Bonus Stage 2: the reward goblins are shot with the bow.** After each section the game sends coins and a line of Soul Goblins. The bot's closing taps (one every half second, from the original) made the character hop over most of them: in one section it killed 7 of 48, all with the sword. Now, once the section's jumps are done and "Section Completed Flawlessly!" is on screen, the bot presses jump every 50 ms: the character stays in the air shooting arrows and picks up the coin rows on the way.
+
+### Fixed
+- **Random Boxes lost behind the Minions tab.** A Silver Box sends several Random Boxes in a row, and the character only gets one by jumping into it. The bot kept the Minions tab open, with the character not jumping, while a box floated by. Now no panel (minions, ascension, skill tree, game settings check) opens while a box is on screen, and a visit to the Minions tab ends as soon as a box shows up beside it; the bot comes back once the character has the box.
+- **Windows: the game settings check missed three settings on every start.** On Windows the labels in the game's settings list are drawn a few pixels differently depending on how far the list is scrolled, and the list sometimes opened halfway down. The bot now scrolls it to the top, waits for it to stop moving, and reads the labels with some tolerance. Linux is unchanged.
+
 ## v2.5.0 (2026-11-06)
 
 ### New

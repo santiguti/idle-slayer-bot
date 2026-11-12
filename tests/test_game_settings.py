@@ -1,7 +1,9 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
+from idle_runner import game_settings
 from idle_runner.game_settings import check_game_settings, find_settings_button, read_toggles
 from idle_runner.shop import Shop
 from tests.fakes import OFFSET, read_png
@@ -19,6 +21,31 @@ LINUX_LIST_AT = 1200
 # The Windows build's list is 285 px shorter above the settings (no "Portrait" and more; frames of
 # 2026-10-28 21:14): "Rounded bulk buy" at client y 111 after 33 notches, at 396 on Linux.
 WINDOWS_LIST_AT = LINUX_LIST_AT - 285
+# The Windows list's content (client x 365-900, y 95-535) read from its top 24 and 30 notches down (live,
+# 2026-11-12). Its labels have a few white pixels more or less than on Linux: "Use scientific notation" 723
+# (722), "Rounded bulk buy" 712 (700), "Confirm dialogue..." 1359 (1360); the other two are equal.
+WIN_AT24, WIN_AT30 = (read_png(FIXTURES / f"win-at{n}.png") for n in (24, 30))
+# The same page after the list was wheeled up past its top and settled: "Use scientific notation" 720 (the
+# counts on Windows move a few pixels with the list's fractional position; live 2026-11-12).
+WIN_AT24_SETTLED = read_png(FIXTURES / "win-at24-settled.png")
+
+
+@pytest.fixture(autouse=True)
+def linux(monkeypatch) -> None:
+    """Every test runs the Linux behaviour (whatever OS runs the suite) unless it asks for `windows`."""
+    monkeypatch.setattr(game_settings, "ON_WINDOWS", False)
+
+
+@pytest.fixture
+def windows(monkeypatch) -> None:
+    monkeypatch.setattr(game_settings, "ON_WINDOWS", True)
+
+
+def windows_page(content: np.ndarray, top: np.ndarray = TOP) -> np.ndarray:
+    """The dialog with a recorded page of the Windows list in it."""
+    frame = top.copy()
+    frame[95:536, 365:901] = content
+    return frame
 
 
 def test_reads_the_toggles_on_screen(game, fake) -> None:
@@ -37,6 +64,40 @@ def test_reads_the_toggles_with_the_game_in_spanish(game, fake) -> None:
     fake.frame[:] = ES_AT39
     assert read_toggles(game) == {"Hide locked Quest rewards": True,
                                   "Confirm dialogue when activating the Portal": False}
+
+
+def test_reads_the_toggles_on_the_windows_build(game, fake, windows) -> None:
+    # 2026-11-12: every Windows start since 10-28 found only "Disable custom cursor" and "Hide locked Quest
+    # rewards"; the other three labels' white counts differ from the Linux ones.
+    fake.frame[:] = windows_page(WIN_AT24)
+    assert read_toggles(game) == {"Use scientific notation": False, "Disable custom cursor": True}
+    fake.frame[:] = windows_page(WIN_AT30)
+    assert read_toggles(game) == {"Rounded bulk buy": True, "Hide locked Quest rewards": True,
+                                  "Confirm dialogue when activating the Portal": False}
+
+
+def test_windows_reads_labels_drawn_a_fraction_of_a_pixel_elsewhere(game, fake, windows) -> None:
+    # Seen live: "Use scientific notation" 720, 722, 723, 731; "Disable custom cursor" 713, 721; both end at
+    # x 680, so their first letter ("U", "D") tells them apart.
+    fake.frame[:] = windows_page(WIN_AT24_SETTLED)
+    assert read_toggles(game) == {"Use scientific notation": False, "Disable custom cursor": True}
+
+
+def test_windows_tells_the_two_labels_ending_at_680_by_their_first_letter(game, fake, windows) -> None:
+    # Swap the two rows' labels: each is still read by its own letter, not by its place.
+    page = WIN_AT24.copy()
+    sci, cursor = page[314 - 95:329 - 95, 80:].copy(), page[394 - 95:409 - 95, 80:].copy()
+    page[314 - 95:329 - 95, 80:], page[394 - 95:409 - 95, 80:] = cursor, sci
+    fake.frame[:] = windows_page(page)
+    assert read_toggles(game) == {"Disable custom cursor": False, "Use scientific notation": True}
+
+
+def test_linux_reads_only_its_own_fingerprints(game, fake) -> None:
+    # The Windows counts are a Windows-only addition: Linux reads exactly what it read before.
+    fake.frame[:] = windows_page(WIN_AT24)
+    assert read_toggles(game) == {"Disable custom cursor": True}
+    fake.frame[:] = windows_page(WIN_AT30)
+    assert read_toggles(game) == {"Hide locked Quest rewards": True}
 
 
 def test_a_list_elsewhere_reads_nothing(game, fake) -> None:
@@ -64,15 +125,16 @@ def show_list(fake, scrolled: int, list_at: int, content: np.ndarray) -> None:
 
 
 def play_settings(fake, list_at: int = LINUX_LIST_AT, content: np.ndarray = LIST, pages: dict | None = None,
-                  menu=MENU, top=TOP) -> None:
-    """The shop opens (its corner and tab bar), "⋮" shows the menu, Settings opens the dialog at its top,
-    each wheel notch scrolls the list 50 px and Cancel goes back. `pages`: recorded frames shown at those
-    notch counts instead (each stands in for the page it was recorded near)."""
-    notches = [0]
+                  menu=MENU, top=TOP, opens_at: int = 0) -> None:
+    """The shop opens (its corner and tab bar), "⋮" shows the menu, Settings opens the dialog `opens_at`
+    notches down (its top by default), each wheel notch scrolls the list 50 px (never above its top) and
+    Cancel goes back. `pages`: recorded frames shown at those notch counts instead (each stands in for the
+    page it was recorded near)."""
+    notches = [opens_at]
 
     def act(action: tuple) -> None:
-        if action[0] == "button" and action[1:] == (5, True):
-            notches[0] += 1
+        if action[0] == "button" and action[1] in (4, 5) and action[2]:
+            notches[0] = max(0, notches[0] + (1 if action[1] == 5 else -1))
             fake.frame[:] = top
             if pages and notches[0] in pages:
                 fake.frame[:] = pages[notches[0]]
@@ -87,6 +149,8 @@ def play_settings(fake, list_at: int = LINUX_LIST_AT, content: np.ndarray = LIST
             fake.frame[:] = menu
         elif click == (930, 558):  # Settings
             fake.frame[:] = top
+            if opens_at:
+                show_list(fake, 50 * notches[0], list_at, content)
         elif click == (791, 631):  # Cancel
             fake.frame[:] = menu
         elif click == (1244, 712):  # the shop's X
@@ -122,6 +186,66 @@ def test_reads_the_shorter_windows_list(game, fake, events) -> None:
     # scrolled past, and they were all reported "not found".
     play_settings(fake, list_at=WINDOWS_LIST_AT)
     assert check_game_settings(game, Shop(game))
+
+
+def test_checks_the_settings_on_the_windows_build(game, fake, events, windows) -> None:
+    play_settings(fake, content=LIST[:0], pages={24: windows_page(WIN_AT24), 30: windows_page(WIN_AT30)})
+    assert check_game_settings(game, Shop(game))
+
+    assert not [r for r in events() if r["event"] == "Game setting not found"]
+
+
+def wheels(fake) -> list[int]:
+    return [a[1] for a in fake.actions if a[0] == "button" and a[2]]  # 4 up, 5 down
+
+
+def test_windows_reads_the_list_from_its_top_when_it_opens_scrolled_down(game, fake, events, windows) -> None:
+    # Live 2026-11-12 (Windows): the dialog opened with its list ~300 px from the top (it usually opens at
+    # the top); 6-notch pages then miss rows, and the labels at other heights have other white counts (the
+    # 11-09 23:11 start found none of the five).
+    play_settings(fake, opens_at=40)
+    assert check_game_settings(game, Shop(game))
+
+    assert wheels(fake)[0] == 4  # up first
+    assert wheels(fake).count(5) == 42  # then the same pages as from the top
+
+
+def test_windows_waits_for_the_text_to_stop_after_wheeling_up(game, fake, windows) -> None:
+    # Live 2026-11-12: past the top the list springs back by fractions of a pixel for ~3 s (its labels' white
+    # counts keep changing), while the half-transparent dialog shows the running game behind it, so the
+    # pixels never stay the same. Only the white text tells when it has settled.
+    play_settings(fake, opens_at=40)
+    played, grab = fake.on_action, fake.grab
+    wheeled_up_at: list[float] = []
+    wheeled_down_at: list[float] = []
+
+    def act(action: tuple) -> None:
+        played(action)
+        if action[0] == "button" and action[1] == 4 and not wheeled_up_at:
+            wheeled_up_at.append(fake.t)
+        if action[0] == "button" and action[1] == 5:
+            wheeled_down_at.append(fake.t)
+
+    def springing(x: int, y: int, w: int, h: int):
+        region = grab(x, y, w, h).copy()
+        if (w, h) != (536, 441):  # only the list
+            return region
+        region[-1, :, :] = int(fake.t) % 200  # the game behind the dialog never stops (never white)
+        if wheeled_up_at and fake.t < wheeled_up_at[0] + 3000:
+            region[0, int(fake.t) % w] = 255  # the text still moves
+        return region
+
+    fake.on_action, fake.grab = act, springing
+    assert check_game_settings(game, Shop(game))
+
+    assert wheeled_down_at[0] >= wheeled_up_at[0] + 3000
+
+
+def test_linux_never_wheels_up(game, fake) -> None:
+    play_settings(fake)
+    assert check_game_settings(game, Shop(game))
+
+    assert 4 not in wheels(fake)
 
 
 def test_checks_the_settings_with_the_game_in_spanish(game, fake, events) -> None:

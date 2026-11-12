@@ -11,6 +11,7 @@ import idle_runner.runner as runner_module
 from idle_runner.config import Settings
 from idle_runner.game import Game
 from idle_runner.log import log
+from idle_runner.minions import Visit
 from idle_runner.state import load_state, update_state
 from idle_runner.runner import (BOX_RETRY_MS, MAX_CONSECUTIVE_CRASHES, RAGE_HOLDOFF_MS, SIX_COIN_TIMEOUT_MS,
                                  WINDOW_RETRY_MS, Runner, install_stop_signals, megahorde_shown)
@@ -596,7 +597,7 @@ def test_the_main_loop_never_clicks_second_wind(game, fake, jumper) -> None:
 def test_minions_are_visited_at_start_after_each_tree_run_and_hourly_while_no_return_is_known(
         game, fake, jumper, monkeypatch) -> None:
     visits: list[float] = []
-    monkeypatch.setattr(runner_module, "send_minions", lambda g: visits.append(fake.t) or ([], False))
+    monkeypatch.setattr(runner_module, "send_minions", lambda g: visits.append(fake.t) or Visit([], False))
     runner = Runner(game, replace(Settings(), auto_buy_tree=False), jumper)
     fake.t += 6_000
     runner.tick()  # the first slow check: the node may have been bought by hand
@@ -617,7 +618,7 @@ def test_minions_are_visited_at_start_after_each_tree_run_and_hourly_while_no_re
 
 
 def test_minions_are_visited_again_when_their_mission_ends(game, fake, jumper, monkeypatch) -> None:
-    sends = iter([([10], False), ([], False), ([], False)])
+    sends = iter([Visit([10], False), Visit([], False), Visit([], False)])
     visits: list[float] = []
     monkeypatch.setattr(runner_module, "send_minions", lambda g: visits.append(fake.t) or next(sends))
     runner = Runner(game, replace(Settings(), work_benefits=True), jumper)  # 3 h x 0.85 = 153 min
@@ -635,7 +636,7 @@ def test_minions_are_visited_again_when_their_mission_ends(game, fake, jumper, m
 def test_the_daily_bonus_brings_the_missions_back_3_hours_sooner(game, fake, jumper, monkeypatch) -> None:
     # It's taken after the sends: the Dark Wizard sent in the same visit is back 3 hours sooner too, and the
     # next tick looks again (missions it ended wait to be claimed).
-    sends = iter([([150], True), ([], False), ([], False)])
+    sends = iter([Visit([150], True), Visit([], False), Visit([], False)])
     visits: list[float] = []
     monkeypatch.setattr(runner_module, "send_minions", lambda g: visits.append(fake.t) or next(sends))
     runner = Runner(game, Settings(), jumper)
@@ -651,7 +652,7 @@ def test_the_ascension_button_glow_starts_no_minion_routine(game, fake, jumper, 
     # The original's "minions are back" (99, 113) is the Ascension button's glow on this version: it glows
     # while ascending is "Recommended" and fired with no minions at all (2026-10-28 00:15:03).
     sent: list[float] = []
-    monkeypatch.setattr(runner_module, "send_minions", lambda g: sent.append(fake.t) or ([], False))
+    monkeypatch.setattr(runner_module, "send_minions", lambda g: sent.append(fake.t) or Visit([], False))
     runner = Runner(game, Settings(), jumper)
     fake.t += 6_000
     runner.tick()
@@ -663,10 +664,54 @@ def test_the_ascension_button_glow_starts_no_minion_routine(game, fake, jumper, 
     assert len(sent) == 1
 
 
+BOXES = Path(__file__).parent / "fixtures" / "boxes"
+
+
+def test_panels_wait_while_a_random_box_is_on_screen(game, fake, jumper, monkeypatch, events) -> None:
+    # Live 2026-11-12 00:36: right after two Silver Boxes the settings check and two minion visits kept panels over
+    # the run for 29 s. The jumper waits during a routine, and a Random Box went by unclaimed.
+    opened: list[str] = []
+    monkeypatch.setattr(runner_module, "send_minions", lambda g: opened.append("minions") or Visit([], False))
+    monkeypatch.setattr(runner_module, "check_game_settings", lambda g, shop: opened.append("settings") is None)
+    settings = replace(Settings(), auto_ascend=True, auto_ascend_minutes=0.1, auto_ascend_percent=0,
+                       ascend_bonus_sample_minutes=0.1, auto_buy_tree=True)
+    runner = Runner(game, settings, jumper)
+    monkeypatch.setattr(runner.shop, "sample_ascend_bonus", lambda keep_open_at=None: opened.append("sample"))
+    monkeypatch.setattr(runner.shop, "auto_ascend", lambda: opened.append("ascend") is None)
+    monkeypatch.setattr(runner.tree, "buy", lambda: opened.append("tree"))
+    fake.frame[100:480, 0:790] = read_png(BOXES / "silver-box.png")
+    fake.t += 7_000
+    runner.tick()
+
+    assert opened == []
+    postponed = [r for r in events() if r["event"] == "Panel postponed"]
+    assert postponed and all(r["reason"] == "Random Box" for r in postponed)
+
+    fake.frame[100:480, 0:790] = 0  # the jumper got it
+    fake.t += 6_000
+    runner.tick()
+
+    assert sorted(opened) == ["ascend", "minions", "sample", "settings", "tree"]
+
+
+def test_a_minions_visit_cut_short_by_a_box_is_made_again(game, fake, jumper, monkeypatch) -> None:
+    sends = iter([Visit([10], bonus=False, box=True), Visit([], bonus=False)])
+    visits: list[float] = []
+    monkeypatch.setattr(runner_module, "send_minions", lambda g: visits.append(fake.t) or next(sends))
+    runner = Runner(game, Settings(), jumper)
+    fake.t += 6_000
+    runner.tick()  # sends the White Knight, then a box comes
+    fake.t += 6_000
+    runner.tick()  # the box is gone: the rest of the list
+
+    assert len(visits) == 2
+    assert runner.minions_back == [pytest.approx(visits[0] + 181 * 60_000)]  # the White Knight still counts
+
+
 def test_the_game_settings_are_checked_once_at_start(game, fake, jumper, monkeypatch) -> None:
     checks: list[float] = []
     monkeypatch.setattr(runner_module, "check_game_settings", lambda g, shop: checks.append(fake.t))
-    monkeypatch.setattr(runner_module, "send_minions", lambda g: ([], False))
+    monkeypatch.setattr(runner_module, "send_minions", lambda g: Visit([], False))
     runner = Runner(game, Settings(), jumper)
     for _ in range(3):
         fake.t += 6_000
@@ -678,7 +723,7 @@ def test_the_game_settings_are_checked_once_at_start(game, fake, jumper, monkeyp
 def settings_checks(fake, monkeypatch, result: bool) -> list[float]:
     checks: list[float] = []
     monkeypatch.setattr(runner_module, "check_game_settings", lambda g, shop: checks.append(fake.t) is None and result)
-    monkeypatch.setattr(runner_module, "send_minions", lambda g: ([], False))
+    monkeypatch.setattr(runner_module, "send_minions", lambda g: Visit([], False))
     return checks
 
 

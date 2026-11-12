@@ -3,8 +3,9 @@ from pathlib import Path
 import pytest
 
 import idle_runner.minigames.bonus_stage as bonus_stage_module
-from idle_runner.minigames.bonus_stage import (BS2_SECTIONS, BS2_SB_SECTIONS, bonus_stage, bs2_section, bs3_section1,
-                                               run_bs2, run_bs3, stage_number)
+from idle_runner.minigames.bonus_stage import (BS2_SECTIONS, BS2_SB_SECTIONS, REWARD_GONE_MS, SHOOT_MS, bonus_stage,
+                                               bs2_section, bs3_section1, reward_shown, run_bs2, run_bs3,
+                                               stage_number)
 from idle_runner.minigames.common import slider_showing
 from tests.fakes import read_png
 
@@ -341,3 +342,142 @@ def test_a_player_standing_among_spinning_orbs_is_nudged(game, fake, event_names
 
     names = event_names()
     assert "Bonus stage nudge" in names and "Sync timeout" not in names
+
+
+def show_top(fake, name: str) -> None:
+    """The top of a recorded BS2 frame (client y 0-119, black box 2026-11-12): "reward-banner" ("Section Completed
+    Flawlessly!", 00:53:24), "orb-counter" (137/140), "countdown" ("3..."), "run-coins" (the normal run's coins)."""
+    fake.frame[0:120] = read_png(FIXTURES / f"top-{name}.png")
+
+
+@pytest.mark.parametrize(("name", "shown"), [
+    ("reward-banner", True), ("orb-counter", False), ("countdown", False), ("run-coins", False),
+    # 01:12:02: a "Quest Completed!" toast slid in from the right over the banner, then sat on its middle
+    ("banner-toast-right", True), ("banner-toast-sliding", True), ("banner-toast-middle", True),
+])
+def test_the_section_reward_banner_on_recorded_frames(game, fake, name: str, shown: bool) -> None:
+    show_top(fake, name)
+
+    assert reward_shown(game) is shown
+
+
+def reward_after(fake, presses: int, lasts_ms: float) -> dict[str, float]:
+    """The section's banner shows once `presses` Up presses went (its orbs are in), for `lasts_ms`; then the next
+    section's countdown. Returns when it showed and went."""
+    times: dict[str, float] = {}
+    sleep = fake.sleep_ms
+
+    def sleeping(ms: float) -> None:
+        sleep(ms)
+        downs = sum(1 for a in fake.actions if a == ("key", "Up", True))
+        if "shown" not in times and downs >= presses:
+            show_top(fake, "reward-banner")
+            times["shown"] = fake.t
+        elif "shown" in times and "gone" not in times and fake.t - times["shown"] >= lasts_ms:
+            show_top(fake, "countdown")
+            times["gone"] = fake.t
+    fake.sleep_ms = sleeping
+    return times
+
+
+S3 = BS2_SECTIONS[2]
+S3_JUMPS = len(S3.moves) + 1  # its moves and the collection's cSend()
+
+
+def test_the_reward_goblins_are_shot_once_the_jumps_are_over(game, fake, event_names) -> None:
+    """2026-11-12 00:52: the collection's taps, one per 500 ms, hopped over the reward's Soul Goblins (7 of 48 killed
+    in S2) and the sword got the rest. Santi: kill them with the bow."""
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    times = reward_after(fake, presses=S3_JUMPS, lasts_ms=6000)
+    presses = key_downs(fake)
+
+    assert bs2_section(game, S3, "BonusStage2-s3") is True
+
+    shots = [t for t in presses[S3_JUMPS:] if t < times["gone"]]  # after the cSend, which the banner came during
+    assert len(shots) >= 60 and all(b - a <= SHOOT_MS + 10 for a, b in zip(shots, shots[1:]))  # every SHOOT_MS
+    # no collection taps after: it stops REWARD_GONE_MS after the banner went
+    assert not [t for t in presses if t >= times["gone"] + REWARD_GONE_MS + SHOOT_MS]
+    assert "Bonus stage reward" in event_names()
+
+
+def test_the_jumps_go_on_after_the_banner(game, fake, event_names) -> None:
+    """01:19:31: shooting from the banner on flew the player up against S2's last wall, as high as the section,
+    for 26 s: the orbs are in before the terrain is over, so the section's own jumps come first."""
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    times = reward_after(fake, presses=3, lasts_ms=60_000)
+    presses = key_downs(fake)
+
+    bs2_section(game, S3, "BonusStage2-s3")
+
+    press, post = S3.moves[2]
+    assert presses[3] - presses[2] >= press + post  # the third jump's pause, as before
+    shots = [t for t in presses if t > presses[S3_JUMPS - 1]]
+    assert shots and shots[0] > times["shown"] + 15_000  # the shooting only once the jumps were over
+    assert "Bonus stage reward" in event_names()
+
+
+def test_the_shooting_stops_when_the_stage_is_over(game, fake) -> None:
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    s4 = BS2_SECTIONS[3]
+    times = reward_after(fake, presses=len(s4.moves), lasts_ms=60_000)  # S4 has no cSend before its taps
+    sleep = fake.sleep_ms
+
+    def stage_over(ms: float) -> None:
+        sleep(ms)
+        if "shown" in times and fake.t - times["shown"] >= 4000:
+            fake.paint(1130, 604, 0x989898)  # the run's shop button: the last section's reward run is over
+    fake.sleep_ms = stage_over
+
+    bs2_section(game, s4, "BonusStage2-s4")
+
+    assert fake.t - times["shown"] < 4000 + 500
+
+
+def test_without_the_banner_the_collection_taps_stay_500_ms_apart(game, fake) -> None:
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    presses = key_downs(fake)
+    bs2_section(game, BS2_SECTIONS[3], "BonusStage2-s4")  # its moves, then 23 taps
+
+    taps = presses[-23:]
+    assert all(b - a >= 500 for a, b in zip(taps, taps[1:]))
+
+
+def test_a_banner_hidden_for_a_moment_does_not_end_the_shooting(game, fake) -> None:
+    """01:12:02: one look at the banner under a sliding toast read as no banner, the shooting ended at once and
+    the next section took that same banner as its own (its run went unplayed)."""
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    times: dict[str, float] = {}
+    sleep = fake.sleep_ms
+
+    def flicker(ms: float) -> None:
+        sleep(ms)
+        downs = sum(1 for a in fake.actions if a == ("key", "Up", True))
+        if "shown" not in times and downs >= S3_JUMPS:
+            show_top(fake, "reward-banner")
+            times["shown"] = fake.t
+        elif "shown" in times:
+            since = fake.t - times["shown"]
+            show_top(fake, "countdown" if 1000 <= since < 1200 or since >= 5000 else "reward-banner")
+    fake.sleep_ms = flicker
+    presses = key_downs(fake)
+
+    bs2_section(game, S3, "BonusStage2-s3")
+
+    assert [t for t in presses if t > times["shown"] + 4000]  # still shooting after the gap at 1.0-1.2 s
+
+
+def test_a_section_does_not_take_the_last_sections_banner(game, fake, event_names) -> None:
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    show_top(fake, "reward-banner")  # still up from the last section, and never gone in between
+    presses = key_downs(fake)
+
+    bs2_section(game, BS2_SECTIONS[3], "BonusStage2-s4")
+
+    assert "Bonus stage reward" not in event_names()
+    assert len(presses) == len(BS2_SECTIONS[3].moves) + 23  # its own jumps and the 23 collection taps

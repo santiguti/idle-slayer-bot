@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from idle_runner.actions import (BIDIMENSIONAL_STAFF, DIMENSIONAL_STAFF, RAGE_PILL, SOUL_COMPASS,
-                                 buy_temp_item, close_all, soul_bonus_active)
+                                 box_on_screen, buy_temp_item, close_all, soul_bonus_active)
 from idle_runner.coins import read_coins
 from idle_runner.config import Settings
 from idle_runner.game import Game
@@ -194,7 +194,8 @@ class Runner:
             self.last_slow = g.now()
             close_all(g)
             asked = self.settings_request.is_set()
-            if self.settings_due or asked:  # not in the original, which only listed them
+            # not in the original, which only listed them
+            if (self.settings_due or asked) and self._clear_of_boxes("check_game_settings"):
                 self.settings_due = False
                 self.settings_request.clear()
                 today = date.today().isoformat()
@@ -228,14 +229,17 @@ class Runner:
                 self.buy()
             bonus = None
             if (s.ascend_bonus_sample_minutes
-                    and g.now() - self.timer_bonus_sample > s.ascend_bonus_sample_minutes * 60_000):
+                    and g.now() - self.timer_bonus_sample > s.ascend_bonus_sample_minutes * 60_000
+                    and self._clear_of_boxes("ascend_bonus_sample")):
                 self.timer_bonus_sample = g.now()
                 keep_open = s.auto_ascend_percent if s.auto_ascend and s.auto_ascend_percent else None
                 bonus = self._routine("ascend_bonus_sample",
                                       lambda: self.shop.sample_ascend_bonus(keep_open_at=keep_open))
             # Not in the original: also ascend once the bonus reaches auto_ascend_percent (the wiki's rule).
             reached = bool(s.auto_ascend_percent) and bonus is not None and bonus >= s.auto_ascend_percent
-            if s.auto_ascend and (reached or g.now() - self.timer_ascend > s.auto_ascend_minutes * 60_000):
+            # When the bonus is reached the sample left the panel open for this: no new panel, so no box check.
+            if s.auto_ascend and (reached or (g.now() - self.timer_ascend > s.auto_ascend_minutes * 60_000
+                                              and self._clear_of_boxes("auto_ascend"))):
                 if reached:
                     event("Ascend bonus reached", percent=bonus)
                 self.timer_ascend = g.now()
@@ -246,23 +250,25 @@ class Runner:
                     self.timer_buy = g.now()
                     self.buy_minutes = s.post_ascend_first_buy_seconds / 60
                     event("Post-ascend buy ramp", first_buy_seconds=s.post_ascend_first_buy_seconds)
-            if s.auto_buy_tree and self.tree_due:  # not in the original (2026-10-26)
+            if s.auto_buy_tree and self.tree_due and self._clear_of_boxes("buy_tree"):  # not in the original
                 self.tree_due = False
                 self._routine("buy_tree", self.tree.buy)
                 self.minions_due = True  # it may have just bought a minion
             back = any(t <= g.now() for t in self.minions_back)
             hourly = not self.minions_back and g.now() - self.timer_minions > MINIONS_EVERY_MS
-            if self.minions_due or back or hourly:
+            if (self.minions_due or back or hourly) and self._clear_of_boxes("send_minions"):
                 self.minions_due = False
                 self.timer_minions = g.now()
                 self.minions_back = [t for t in self.minions_back if t > g.now()]
-                sent, bonus = self._routine("send_minions", lambda: send_minions(g))
-                for cost in sent:
+                visit = self._routine("send_minions", lambda: send_minions(g))
+                for cost in visit.sent:
                     length = mission_ms(cost, s)
                     if length is not None:
                         self.minions_back.append(g.now() + length + MINIONS_MARGIN_MS)
-                if bonus:  # every mission out ends 3 hours sooner: some may be over already
+                if visit.bonus:  # every mission out ends 3 hours sooner: some may be over already
                     self.minions_back = [t - DAILY_BONUS_MS for t in self.minions_back]
+                    self.minions_due = True
+                if visit.box:  # cut short: the rest of the list once the jumper has the box
                     self.minions_due = True
 
     def buy(self) -> None:
@@ -323,6 +329,16 @@ class Runner:
             buy_temp_item(g, BIDIMENSIONAL_STAFF)
             self.bidimensional_pending = False
         g.tap("r")
+
+    def _clear_of_boxes(self, routine: str) -> bool:
+        """Whether `routine` may open its panel now. Not in the original. A panel hides the run and the jumper
+        waits during a routine, so a Random Box floating by is lost (live 2026-11-12 00:36: right after two
+        Silver Boxes, the settings check and two minion visits kept panels open for 29 s while a box went by).
+        Until the box is gone, the routine waits for a later slow check."""
+        if box_on_screen(self.game):
+            event("Panel postponed", routine=routine, reason="Random Box")
+            return False
+        return True
 
     def _routine[T](self, name: str, fn: Callable[[], T]) -> T:
         """SyncProcess(False) ... SyncProcess(True) around `fn`, with timing logs."""
