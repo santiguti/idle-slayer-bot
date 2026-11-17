@@ -144,7 +144,7 @@ La primera vez que el bot pulsa una tecla, KDE Plasma en Wayland pregunta si lo 
 | 🔧 **Nunca se traba** | Una pantalla que no aparece queda registrada con una captura y se saltea. Después de 5 errores seguidos se detiene de forma segura. |
 | 📼 **Caja negra** | Guarda la última hora de juego. Pulsa **Marcar problema** y ese momento queda guardado para siempre. |
 | 📐 **Control de la ventana** | Se pausa con un aviso mientras la ventana no mide 1280x720. |
-| 🧪 **Tests automáticos** | Más de 400 tests, muchos con capturas reales del juego. |
+| 🧪 **Tests automáticos** | Más de 600 tests, muchos con capturas reales del juego. |
 
 <details>
 <summary>Todos los detalles</summary>
@@ -162,6 +162,7 @@ La primera vez que el bot pulsa una tecla, KDE Plasma en Wayland pregunta si lo 
 - **Árbol de Ascensión:** con `auto_buy_tree`, el bot aleja el zoom del árbol al máximo (ahí cada nodo tiene un lugar fijo) y hace clic en los nodos en el orden de `tree_order` (ver Configuración). Los nodos comprados se saltean y se recuerdan entre inicios (en `state.json`, al lado de `config.toml`); cada corrida abre primero el último nodo recordado, sin comprar, y los olvida todos si una Ultra Ascensión reinició el árbol. Se detiene en el primer nodo que no puede comprar. Corre al iniciar, después de cada ascensión del bot y después de una tuya.
 - **Súbditos:** al iniciar, después de cada corrida del árbol y cuando debería terminar una misión que empezó, el bot reclama a los súbditos que vuelven de sus misiones y envía a cada súbdito cuya misión cubren tus SP sin gastar. Sabe cuánto dura cada misión por su costo (la tabla de la wiki); marca en la página Configuración las Divinidades que aceleran las misiones (Beneficios de Trabajo, Condiciones de Trabajo Mejoradas, Greeks Blessing). Las misiones que no empezó las revisa cada hora. Primero lee el costo de la misión en el botón y tus SP en el encabezado, así el juego nunca llega a ofrecer gemas por la diferencia. Una vez por día, después de enviarlos, toma el Bonus Diario gratuito (3 horas menos en cada misión en curso) mientras algún súbdito está en misión.
 - **Etapa Bonus 1** (mientras el nodo "Etapa Bonus 2" del árbol no está comprado) se saltea: el bot deja que se acabe su primera sección y lo cierra.
+- **Etapa Bonus 3:** las secciones 1 y 4 se juegan mirando las plataformas (los saltos con tiempos fijos del original ya no coinciden con el juego); las secciones 2 y 3 mantienen los saltos del original.
 - Las fabricaciones de una sola vez (la Vara de la Dimensión Alternativa y la Bidimensional Staff) se hacen una vez por corrida. La rotación de portales vuelve a empezar desde `circle_portals_count`.
 - Las marcas de sincronización de las Etapas Bonus que nunca aparecen quedan registradas como eventos `Sync timeout` con una captura.
 - La pelea contra el Knight está desactivada.

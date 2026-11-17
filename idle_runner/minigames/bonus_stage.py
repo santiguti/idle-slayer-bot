@@ -2,7 +2,8 @@
 
 The jump sequences are `cSend(press_ms, post_ms)` pairs copied verbatim. BS2 is table-driven
 (its four sections share one shape); BS3 interleaves waits for on-screen markers, so it stays
-function-per-section like the original.
+function-per-section like the original. BS3's sections 1 and 4 keep only the original's sync: their jumps are
+decided on sight by bs3_reactive (the timed ones drift off this game version's layout).
 """
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ import numpy as np
 from idle_runner.game import STUCK_MS, Game
 from idle_runner.log import event
 from idle_runner.minigames.common import slide_until, slider_showing
+from idle_runner.minigames.bs3_reactive import play_section, wait_reward_cleared
 
 Moves = tuple[tuple[int, int], ...]
 
@@ -82,6 +84,11 @@ REWARD_WHITE_MIN = 1200
 REWARD_GONE_MS = 500
 SHOOT_MS = 50
 REWARD_MAX_MS = 30_000
+# The jumps can be over with terrain still ahead (2026-11-12 19:52, S2 after cutting 4 s of stalls): the shots kept
+# the player floating against a rock hanging from the cave's roof for 14 s, the camera's change ~0.3 (>= 8 in every
+# reward run recorded that day, so a still camera there is never the reward). STUCK_LOOKS still looks while shooting:
+# no shots for UNSTICK_MS, the player lands (~165 px) and runs on under the rock (~200 px at ~600 px/s).
+UNSTICK_MS = 1000
 
 S2_MOVES: Moves = (
     (156, 719), (47, 687), (360, 1390), (485, 344), (406, 749), (78, 600), (94, 900), (109, 954),
@@ -203,10 +210,11 @@ def bs2_collect(game: Game, section: Bs2Section, banner: Banner) -> bool:
 def shoot_through_reward(game: Game, label: str) -> None:
     """Shoot the reward's Soul Goblins with the bow (see REWARD_BAND): Up every SHOOT_MS until the banner has given
     way to the next section's countdown for REWARD_GONE_MS, the stage is over (the run's shop button) or
-    REWARD_MAX_MS pass."""
+    REWARD_MAX_MS pass. A player stuck while shooting gets UNSTICK_MS without shots."""
     event("Bonus stage reward", where=label)
     deadline = game.now() + REWARD_MAX_MS
     gone_since: float | None = None
+    camera, streak = Camera(game), 0
     while game.now() < deadline and not game.pixel_is(*RUN_SHOP, quiet=True):
         if reward_shown(game):
             gone_since = None
@@ -214,6 +222,12 @@ def shoot_through_reward(game: Game, label: str) -> None:
             gone_since = game.now()
         elif game.now() - gone_since >= REWARD_GONE_MS:
             return
+        streak = streak + 1 if camera.still() else 0
+        if streak >= STUCK_LOOKS:
+            event("Bonus stage shooting paused", where=label)
+            game.sleep(UNSTICK_MS)
+            streak = 0
+            continue
         game.tap("Up")
         game.sleep(SHOOT_MS - 10)  # the tap itself takes 10 ms
 
@@ -367,6 +381,11 @@ def bs2_section(game: Game, section: Bs2Section, label: str, nudge: bool = False
 
 # --- Bonus stage 3 ---
 
+# Sections 1 and 4 are played on sight until their banner; their timers run 30 s (S4 from "Go!", S1 a little
+# longer than its sync), so these only stop a section the banner never ended.
+BS3_S1_MAX_MS = 34_000
+BS3_S4_MAX_MS = 40_000
+
 def bs3_tag(sb: bool) -> str:
     return "BonusStage3SB" if sb else "BonusStage3"
 
@@ -404,17 +423,8 @@ def collect_loot_bs3(game: Game, sb: bool, count: int = 25, stop_early: bool = T
 
 def bs3_section1(game: Game, sb: bool) -> bool:
     game.find_until(520, 200, 580, 250, 0xFFFFFF, label=f"{bs3_tag(sb)}-s1-1")
-    game.sleep(360)
-    holds(game, ((140, 530), (70, 640), (80, 740), (150, 765), (65, 625), (65, 500)))
-    game.find_until(540, 335, 555, 360, 0xFFFFFF, 700, label=f"{bs3_tag(sb)}-s1-2")
-    holds(game, ((150, 750), (200, 200)))
-    game.find_until(390, 230, 410, 250, 0xFFFFFF, 3500, label=f"{bs3_tag(sb)}-s1-3")
-    holds(game, ((130, 545), (70, 620), (80, 400)))
-    game.find_until(500, 200, 515, 250, 0xFFFFFF, 1500, label=f"{bs3_tag(sb)}-s1-4")
-    holds(game, ((150, 755), (65, 625), (65, 500)))
-    game.find_until(540, 335, 555, 360, 0xFFFFFF, 700, label=f"{bs3_tag(sb)}-s1-5")
-    holds(game, ((150, 740), (200, 1490), (110, 580), (65, 640), (80, 740), (150, 765), (130, 560), (70, 650)))
-    game.sleep(800)
+    # Not the original's 25 timed jumps: on this game version they drift off the pillars (bs3_reactive).
+    play_section(game, f"{bs3_tag(sb)}-s1", BS3_S1_MAX_MS)
     if not collect_loot_bs3(game, sb, 21):
         return False
     event(f"{bs3_tag(sb)} Section 1 Complete")
@@ -422,6 +432,9 @@ def bs3_section1(game: Game, sb: bool) -> bool:
 
 
 def bs3_section2(game: Game, sb: bool) -> bool:
+    # Not in the original: section 1's reward loot crossed this sync spot as its banner went (2026-11-16, 3 of 7
+    # stages), and S2's jumps started ~6 s early.
+    wait_reward_cleared(game)
     game.find_until(306, 200, 309, 275, 0xFFFFFF, label=f"{bs3_tag(sb)}-s2-1")
     for _ in range(2):
         holds(game, ((80, 440), (95, 660), (105, 500)))
@@ -477,13 +490,8 @@ def bs3_section3(game: Game, sb: bool) -> bool:
 
 def bs3_section4(game: Game, sb: bool) -> bool:
     game.find_until(330, 170, 380, 195, 0xFFFFFF, label=f"{bs3_tag(sb)}-s4-1")
-    if not sb:
-        for _ in range(5):
-            holds(game, ((300, 600), (300, 420), (35, 748), (35, 540), (35, 1160)))
-    else:
-        for _ in range(14):
-            game.hold(110, 1180)
-        game.hold(300, 300)
+    # Not the original's timed jumps (SB: 14 hops): they stood against walls and missed the orb grids.
+    play_section(game, f"{bs3_tag(sb)}-s4", BS3_S4_MAX_MS, hops=True)
     if not collect_loot_bs3(game, sb, 25, stop_early=False):
         return False
     event(f"{bs3_tag(sb)} Section 4 Complete")

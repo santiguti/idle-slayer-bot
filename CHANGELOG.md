@@ -5,6 +5,15 @@ needs something from you or drops something (a config that no longer loads, a pl
 adds something new (a feature, a setting, a minigame the bot plays differently), and a **patch** version (2.6.1) only
 fixes what was already there. From v2.6.0 on, every version below has a git tag with its name.
 
+## v2.7.0 (2026-11-16)
+
+### New
+- **Bonus Stage 3 is completed.** The original's timed jumps no longer fit this version of the game: on 2026-11-16 the bot failed the first section in every try (it fell at the fourth pillar) and stood against walls in the last one. Sections 1 and 4 are now played by looking at the screen: before each jump the bot finds the platforms ahead, measures how fast they move (the boost and Spirit Boost nearly double the speed) and jumps when the jump lands on the next one, walking off an edge when a lower platform is right below. In section 4 it also jumps over the walls of the tall blocks and through the rows of orbs hanging above them. Sections 2 and 3 keep the original's jumps. In the last four stages tested the bot completed three, one of them without needing Second Wind.
+
+### Fixed
+- **Bonus Stage 3's second section started early.** The gems from the first section's reward crossed the spot the bot watches to start section 2, so its jumps began about 6 seconds too soon and the section failed. The bot now waits for the reward to clear.
+- **Bonus Stage 2: the character could float for seconds against a rock while shooting the reward goblins.** When the jumps end with terrain still ahead, the bot now stops shooting for a second when the character is stuck, so it lands and runs on.
+
 ## v2.6.0 (2026-11-12)
 
 ### New

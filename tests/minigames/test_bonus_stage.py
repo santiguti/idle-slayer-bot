@@ -1,10 +1,11 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import idle_runner.minigames.bonus_stage as bonus_stage_module
-from idle_runner.minigames.bonus_stage import (BS2_SECTIONS, BS2_SB_SECTIONS, REWARD_GONE_MS, SHOOT_MS, bonus_stage,
-                                               bs2_section, bs3_section1, reward_shown, run_bs2, run_bs3,
+from idle_runner.minigames.bonus_stage import (BS2_SECTIONS, BS2_SB_SECTIONS, REWARD_GONE_MS, SHOOT_MS, UNSTICK_MS,
+                                               bonus_stage, bs2_section, bs3_section1, bs3_section2, bs3_section4, reward_shown, run_bs2, run_bs3,
                                                stage_number)
 from idle_runner.minigames.common import slider_showing
 from tests.fakes import read_png
@@ -81,7 +82,8 @@ def test_bonus_stage_returns_once_the_run_is_back(game, fake) -> None:
     assert fake.t >= 10_000
 
 
-def test_bs3_sync_timeouts_are_logged(game, events) -> None:
+def test_bs3_sync_timeouts_are_logged(game, fake, events) -> None:
+    fake.cost_ms = 100  # the section then plays on until its time runs out
     bs3_section1(game, False)
 
     assert any(r["event"] == "Sync timeout" and r["where"] == "BonusStage3-s1-1" for r in events())
@@ -390,6 +392,7 @@ def test_the_reward_goblins_are_shot_once_the_jumps_are_over(game, fake, event_n
     for x, y, color in SYNC_MARKERS:
         fake.paint(x, y, color)
     times = reward_after(fake, presses=S3_JUMPS, lasts_ms=6000)
+    running(fake)  # the reward run: the camera never stood still in the 4 recorded on 2026-11-12
     presses = key_downs(fake)
 
     assert bs2_section(game, S3, "BonusStage2-s3") is True
@@ -416,6 +419,24 @@ def test_the_jumps_go_on_after_the_banner(game, fake, event_names) -> None:
     shots = [t for t in presses if t > presses[S3_JUMPS - 1]]
     assert shots and shots[0] > times["shown"] + 15_000  # the shooting only once the jumps were over
     assert "Bonus stage reward" in event_names()
+
+
+def test_a_player_stuck_while_shooting_is_let_down(game, fake, event_names) -> None:
+    """2026-11-12 19:52: S2's banner came with a rock hanging from the cave's roof still ahead; a shot every 50 ms
+    kept the player floating against it for 14 s (camera change ~0.3), until the focus went. A still camera while
+    shooting: no shots for UNSTICK_MS, so the player lands and runs on under it."""
+    for x, y, color in SYNC_MARKERS:
+        fake.paint(x, y, color)
+    times = reward_after(fake, presses=S3_JUMPS, lasts_ms=6000)
+    presses = key_downs(fake)
+
+    bs2_section(game, S3, "BonusStage2-s3")  # the frame never moves: stuck
+
+    shots = [t for t in presses[S3_JUMPS:] if t < times["gone"]]
+    gaps = [b - a for a, b in zip(shots, shots[1:])]
+    assert max(gaps) >= UNSTICK_MS
+    assert len(shots) > 10  # it shoots again after each pause
+    assert "Bonus stage shooting paused" in event_names()
 
 
 def test_the_shooting_stops_when_the_stage_is_over(game, fake) -> None:
@@ -481,3 +502,46 @@ def test_a_section_does_not_take_the_last_sections_banner(game, fake, event_name
 
     assert "Bonus stage reward" not in event_names()
     assert len(presses) == len(BS2_SECTIONS[3].moves) + 23  # its own jumps and the 23 collection taps
+
+
+@pytest.mark.parametrize(("section", "sync", "label"), [(bs3_section1, (550, 225), "BonusStage3-s1"),
+                                                        (bs3_section4, (355, 180), "BonusStage3-s4")])
+def test_bs3_sections_1_and_4_are_played_on_sight_after_their_sync(game, fake, events, section, sync, label) -> None:
+    """2026-11-16: the original's timings drift off this game's layout (S1 lost its 4th pillar in all 4 tries, S4
+    stood against walls); bs3_reactive jumps on what it sees, from the original's sync to the section's banner."""
+    fake.frame[:] = read_png(FIXTURES / "bs3-section-banner.png")
+    fake.paint(*sync, 0xFFFFFF)
+
+    assert section(game, False) is True
+
+    played = [(r["where"], r["end"]) for r in events() if r["event"] == "Bonus stage section played"]
+    assert played == [(label, "banner")]
+
+
+def test_bs3_s2_waits_for_section_1s_reward_to_clear_before_its_sync(game, fake) -> None:
+    """2026-11-16 (19:58, 20:52, 21:24): section 1's reward loot (gems with white glints) crossed S2's sync spot as
+    its banner went, 40-90 ms after the reward taps; S2's jumps started ~6 s early and the section failed. When S2
+    went well its sync came 6-8 s after the taps."""
+    banner = read_png(FIXTURES / "bs3-section-banner.png")
+    banner[230:250, 296:304] = 255  # the loot's glints on the sync spot
+    fake.frame[:] = banner
+    first_up: list[float] = []
+
+    def on_action(action: tuple) -> None:
+        if action[0] == "key" and action[1] == "Up" and action[2] and not first_up:
+            first_up.append(fake.t)
+
+    after = np.zeros_like(banner)
+    after[230:250, 296:304] = 255  # now S2's own marker
+    real_grab = fake.grab
+
+    def grab(x: int, y: int, w: int, h: int) -> np.ndarray:
+        if fake.t >= 3000:
+            fake.frame = after
+        return real_grab(x, y, w, h)
+
+    fake.grab = grab
+    fake.on_action = on_action
+    bs3_section2(game, False)
+
+    assert first_up and first_up[0] >= 4000

@@ -141,7 +141,7 @@ The first time the bot presses a key, KDE Plasma on Wayland asks whether to allo
 | 🔧 **Never gets stuck** | A screen that never shows up is logged with a screenshot and skipped. After 5 errors in a row it stops safely. |
 | 📼 **Black box** | Keeps the last hour of gameplay. Press **Mark problem** and that moment is saved for good. |
 | 📐 **Window check** | Pauses with a warning while the window isn't 1280x720. |
-| 🧪 **Automated tests** | Over 400 tests, many replaying real game screenshots. |
+| 🧪 **Automated tests** | Over 600 tests, many replaying real game screenshots. |
 
 <details>
 <summary>All the details</summary>
@@ -159,6 +159,7 @@ The first time the bot presses a key, KDE Plasma on Wayland asks whether to allo
 - **Ascension Tree:** with `auto_buy_tree`, the bot zooms the tree all the way out (where every node has a fixed place), then clicks the nodes in the order of `tree_order` (see Settings). Bought nodes are skipped and remembered between starts (in `state.json`, next to `config.toml`); each run first opens the last one remembered, without buying, and forgets them all if an Ultra Ascension reset the tree. It stops at the first node it can't buy. It runs at start, after each ascension by the bot, and after one by hand.
 - **Minions:** at start, after each tree run and when a mission it started should be over, the bot claims the minions back from their missions and sends every minion whose mission your unspent SP covers. It knows each mission's length from its cost (the wiki's table); tick the Divinities that speed missions up (Work Benefits, Improved Work Conditions, Greeks Blessing) on the Settings page. Missions it didn't start are looked at every hour. It reads the mission's cost on the button and your SP in the header first, so the game never gets to offer jewels for the rest. Once a day, after sending them, it takes the free Daily Bonus (3 hours off every mission running) while a minion is away.
 - **Bonus Stage 1** (while the tree's "Bonus Stage 2" node isn't bought) is skipped: the bot lets its first section run out and closes it.
+- **Bonus Stage 3:** sections 1 and 4 are played by looking at the platforms (the original's timed jumps no longer fit the game); sections 2 and 3 keep the original's jumps.
 - One-shot crafts (Dimensional/Bidimensional staff) apply once per run. The portal rotation restarts from `circle_portals_count`.
 - Bonus-stage sync markers that never show up are logged as `Sync timeout` events with a screenshot.
 - The Knight boss fight is disabled.
