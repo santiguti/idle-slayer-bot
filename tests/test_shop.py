@@ -157,7 +157,7 @@ def test_claim_quests_clicks_green_claim_buttons(game, fake, event_names) -> Non
     fake.paint(1000, 690, 0xED8C18)  # the Quests tab glows: something to claim
     fake.paint(1160, 300, 0x11A622)
     fake.on_action = lambda a: fake.paint(1160, 300, 0) if a == client_click(1160, 300) else None
-    Shop(game).claim_quests()
+    assert Shop(game).claim_quests() is True
 
     assert (1160, 300) in fake.clicks()
     assert event_names().count("Quest Claimed") == 1
@@ -709,7 +709,7 @@ def test_claim_quests_without_a_glowing_quests_tab_claims_nothing(game, fake, ev
     fake.paint(807, 145, 0xFFFFFF)
     show_tab(fake, "quests")
     fake.paint(1160, 300, 0x11A622)
-    Shop(game).claim_quests()
+    assert Shop(game).claim_quests() is False
 
     assert "Claim quests: nothing to claim" in event_names()
     assert (1160, 300) not in fake.clicks() and (1000, 690) not in fake.clicks()

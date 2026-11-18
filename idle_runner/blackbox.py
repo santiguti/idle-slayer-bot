@@ -31,7 +31,7 @@ ANOMALIES = frozenset({
     "Chesthunt saver not found", "Life saver skipped: saver not found", "Portal destination not found",
     "Ascending Heights timed out after 4 minutes", "Ascend bonus not shown", "Ascend bonus unreadable",
     "Tree not shown", "Tree node not bought", "Tree jewel offer closed", "Extra daily quests click had no effect",
-    "Minions SP not readable", "Minions buttons unknown", "Minion not claimed",
+    "Minions SP not readable", "Minions tab not shown", "Minions buttons unknown", "Minion not claimed",
     "Minions daily bonus click had no effect", "Game setting wrong", "Game setting not found", "Game settings not checked",
 })
 

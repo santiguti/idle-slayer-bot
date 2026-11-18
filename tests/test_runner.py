@@ -13,7 +13,7 @@ from idle_runner.game import Game
 from idle_runner.log import log
 from idle_runner.minions import Visit
 from idle_runner.state import load_state, update_state
-from idle_runner.runner import (BOX_RETRY_MS, MAX_CONSECUTIVE_CRASHES, RAGE_HOLDOFF_MS, SIX_COIN_TIMEOUT_MS,
+from idle_runner.runner import (BOX_RETRY_MS, MAX_CONSECUTIVE_CRASHES, QUESTS_HOLDOFF_MS, RAGE_HOLDOFF_MS, SIX_COIN_TIMEOUT_MS,
                                  WINDOW_RETRY_MS, Runner, install_stop_signals, megahorde_shown)
 from idle_runner.game import GameUnavailable, WindowGone
 from tests.fakes import OFFSET, FakeBackend, read_png
@@ -445,13 +445,30 @@ def test_restarted_game_window_is_found_again(game, fake, jumper, event_names) -
 def test_claim_trigger_matches_the_pulsing_shop_button_near_its_peak(game, fake, jumper, monkeypatch) -> None:
     runner = Runner(game, Settings(), jumper)
     claims = []
-    monkeypatch.setattr(runner.shop, "claim_quests", lambda: claims.append(fake.t))
+    monkeypatch.setattr(runner.shop, "claim_quests", lambda: claims.append(fake.t) or True)
     # Measured 2026-10-22 at 144 FPS: the button glows smoothly from 989898 to CFCF46 and back,
     # so the exact CBCB4C of the original lasts one frame (~7 ms) and the 40 ms loop rarely sees it.
     for color, expected in ((0x989898, 0), (0xBCBC63, 0), (0xC3C35A, 1), (0xCFCF46, 2)):
         fake.paint(1130, 610, color)
         runner.tick()
         assert len(claims) == expected, hex(color)
+
+
+def test_a_glow_with_nothing_to_claim_holds_the_claims_off(game, fake, jumper, monkeypatch) -> None:
+    # 2026-11-12 22:06-23:01: the shop button glowed for the "⋮" tab, not for quests, and the bot opened
+    # and closed the shop every 2 s for 55 minutes (1.3 s each: 65% of the run).
+    runner = Runner(game, Settings(), jumper)
+    claims = []
+    monkeypatch.setattr(runner.shop, "claim_quests", lambda: claims.append(fake.t) and False)
+    fake.paint(1130, 610, 0xCFCF46)
+    runner.tick()
+    fake.t += QUESTS_HOLDOFF_MS - 100
+    runner.tick()
+    assert len(claims) == 1
+
+    fake.t += 100
+    runner.tick()
+    assert len(claims) == 2
 
 
 def run_ticks_reading(runner: Runner, fake: FakeBackend, monkeypatch, readings: list) -> None:

@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 
-from idle_runner.actions import TAB_SELECTED, box_on_screen, open_ascension_tab
+from idle_runner.actions import TAB_SELECTED, box_on_screen, close_panel, close_shop, open_ascension_tab
 from idle_runner.ascend_bonus import read_ascend_bonus
 from idle_runner.game import STUCK_MS, Game, Point
 from idle_runner.log import event
@@ -134,10 +134,8 @@ class Shop:
         panel over the shop that takes every click until Escape (no buys for 55 minutes on 2026-10-23).
         The shop takes about 120 ms to close; the original slept 150 ms.
         """
-        g = self.game
-        if g.pixel_search(807, 140, 807, 155, 0xFFFFFF):  # the shop's corner, as in open_shop
-            g.click(1244, 712)
-        g.sleep(300)
+        close_shop(self.game)
+        self.game.sleep(300)
 
     def open_shop(self) -> bool:
         """Click the shop button and wait for the shop's corner; click once more if it doesn't show.
@@ -340,14 +338,15 @@ class Shop:
                 break
         self.buy_upgrade()
 
-    def claim_quests(self) -> None:
+    def claim_quests(self) -> bool:
+        """Claim every quest reward; False when the shop showed nothing to claim (or couldn't be read)."""
         g = self.game
         event("Claiming quest")
         self.close_if_open()
         if not self.open_shop():  # not in the original, which clicked on regardless
             event("Claim quests: shop not open")
             g.save_frame("claim-shop-not-open")
-            return
+            return False
         g.click(850, 690)  # armor tab
         g.click(927, 683)  # upgrades tab
         g.sleep(150)
@@ -355,16 +354,17 @@ class Shop:
             event("Claim quests: no Quests tab")
             g.save_frame("claim-no-quests-tab")
             g.click(1244, 712)  # close the shop
-            return
+            return False
         if not self.quests_claimable():  # the shop button's glow isn't only quests (2026-10-23)
             event("Claim quests: nothing to claim")
             g.click(1244, 712)  # close the shop
-            return
+            return False
         try:
             self.claim_in_shop()
         except BoxOnScreen:  # the shop button keeps glowing: the claim runs again later
             event("Shopping stopped for a Random Box")
         g.click(1244, 712)  # close the shop
+        return True
 
     def quests_claimable(self, watch_ms: float = 600) -> bool:
         """The Quests tab glows: a reward can be claimed. The glow pulses about once a second and stays above
@@ -467,7 +467,7 @@ class Shop:
         else:
             event("Ascend bonus", percent=bonus)
         if bonus is None or keep_open_at is None or bonus < keep_open_at:
-            g.click(570, 694)  # close the panel (its X tab, as CollectMinion does)
+            close_panel(g)
         return bonus
 
     def auto_ascend(self) -> bool:
@@ -507,7 +507,7 @@ class Shop:
         if dialog is None:
             event("Ascend skipped", reason="no dialog after the Ascend click")
             g.save_frame("ascend-no-dialog")
-            g.click(570, 694)  # close the panel (its X tab, as CollectMinion does)
+            close_panel(g)
             return False
         g.click(*ASCEND_CONFIRM)  # "Yes", or "Close" when there's nothing to claim
         if dialog == CANT_ASCEND_CLOSE:

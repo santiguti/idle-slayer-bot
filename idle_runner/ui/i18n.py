@@ -361,6 +361,7 @@ de bonus de MpS, o cada 30 minutos como máximo (Configuración, Ascensión)."""
     "Tree jewel offer closed": "Árbol: se cerró una oferta de gemas",
     "Extra daily quests click had no effect": "El clic en las Misiones Diarias extra no tuvo efecto",
     "Minions SP not readable": "Súbditos: no se pudieron leer los SP",
+    "Minions tab not shown": "No se mostró la pestaña de Súbditos",
     "Minions buttons unknown": "Súbditos: botones desconocidos",
     "Minion not claimed": "No se reclamó el súbdito",
     "Minions daily bonus click had no effect": "El clic en el Bonus Diario de los súbditos no tuvo efecto",

@@ -10,7 +10,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from idle_runner.actions import TAB_SELECTED, box_beside_panel, open_ascension_tab
+from idle_runner.actions import TAB_SELECTED, box_beside_panel, close_panel, open_ascension_tab
 from idle_runner.ascend_bonus import _classify, sp_amount
 from idle_runner.config import Settings
 from idle_runner.game import Game, Point
@@ -240,7 +240,7 @@ def send_minions(game: Game) -> Visit:
     ends the visit before its next step, so the jumper can get the box."""
     sent: list[int] = []
     if not open_ascension_tab(game):
-        game.click(570, 694)  # exit
+        close_panel(game)  # exit
         return Visit(sent, bonus=False)
     for attempt in range(2):
         if attempt:
@@ -254,7 +254,7 @@ def send_minions(game: Game) -> Visit:
         else:
             event("Minions buttons unknown")
             game.save_frame("minions-buttons-unknown")
-        game.click(570, 694)  # exit
+        close_panel(game)  # exit
         return Visit(sent, bonus=False)
     game.move(*LIST_POINTER)
     if thumb(game)[0]:
@@ -274,11 +274,15 @@ def send_minions(game: Game) -> Visit:
                 if game.now() > deadline:
                     event("Minion not claimed")
                     game.save_frame("minion-claim-no-effect")
-                    game.click(570, 694)  # exit
+                    close_panel(game)  # exit
                     return Visit(sent, bonus=False)
                 game.sleep(50)
             event("Minion claimed")
-            if box_came(game, EARNED_TEXT_MS):  # the "N earned" text floats over the list meanwhile
+            # The "N earned" text floats up over the rows above, never below: a claim lower down can go at once
+            # (claims are taken top first), the sends wait for the text to clear.
+            if any(other > top for other, _ in buttons(game, CLAIM)):
+                continue
+            if box_came(game, EARNED_TEXT_MS):
                 box = True
                 break
             continue
@@ -316,10 +320,10 @@ def send_minions(game: Game) -> Visit:
             if game.now() > deadline:
                 event("Minion not sent", reason="no effect", cost=cost)
                 game.save_frame("minion-send-no-effect")
-                game.click(570, 694)  # exit
+                close_panel(game)  # exit
                 return Visit(sent, bonus=False)
             game.sleep(50)
         event("Minion sent", cost=cost)
         sent.append(cost)
-    game.click(570, 694)  # exit
+    close_panel(game)  # exit
     return Visit(sent, bonus, box)

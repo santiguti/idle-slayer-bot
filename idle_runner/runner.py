@@ -40,6 +40,10 @@ MAX_CONSECUTIVE_CRASHES = 5  # unexpected errors in a row before giving up (e.g.
 HORDE_OUTLINE = 0x140C1C
 HORDE_BANG = (903, 255, 903, 325)  # client x 895, y 224-294
 HORDE_TOPS = (388, 414, 455, 488, 528, 568, 609, 648, 688, 730, 768, 810, 851, 892)  # on the "!"'s top row
+# Not in the original: the shop button also glows for the shop's "⋮" tab (a game update or a new character, nothing
+# to do). On 2026-11-12 the bot opened the shop every 2 s for 55 minutes over it; after a visit with nothing to
+# claim, the glow is ignored this long.
+QUESTS_HOLDOFF_MS = 60_000
 RAGE_HOLDOFF_MS = 5_000  # one rage per horde: its text shows ~1 s, ~20 loops (each tapped R before)
 
 
@@ -81,6 +85,7 @@ class Runner:
         self.buy_minutes: float = settings.auto_buy_minutes  # $iAutoBuyTempTimer
         self.portal_count = settings.circle_portals_count
         self.last_rage = -RAGE_HOLDOFF_MS  # when the last horde was raged at
+        self.quests_idle_until = 0.0  # claims wait until then after a visit with nothing to claim
         # The original unticks these after one use; with a read-only config they apply once per run.
         self.dimensional_pending = settings.craft_dimensional_staff
         self.bidimensional_pending = settings.craft_bidimensional_staff
@@ -175,8 +180,10 @@ class Runner:
             self._routine("rage_when_horde", self.rage_when_horde)
         # A quest can be claimed: the shop button pulses 989898 -> CFCF46. The original matches CBCB4C
         # exactly, one ~7 ms frame at 144 FPS; ±16 covers ~160 ms of each pulse (measured 2026-10-22).
-        if g.pixel_search(1130, 610, 1130, 610, 0xCBCB4C, variation=16, quiet=True):
-            self._routine("claim_quests", self.shop.claim_quests)
+        if (g.now() >= self.quests_idle_until
+                and g.pixel_search(1130, 610, 1130, 610, 0xCBCB4C, variation=16, quiet=True)
+                and not self._routine("claim_quests", self.shop.claim_quests)):
+            self.quests_idle_until = g.now() + QUESTS_HOLDOFF_MS
         if soul_bonus_active(g):  # rage during soul bonus
             g.tap("r")
         # Chest hunt. Every coin has the original's two colours 7 px apart (a false start on 2026-10-28), so

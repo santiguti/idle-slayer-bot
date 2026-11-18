@@ -77,12 +77,40 @@ def buy_temp_item(game: Game, color: int) -> None:
     game.sleep(100)
 
 
+def close_shop(game: Game) -> bool:
+    """Close the shop if it's open; True if it clicked its X tab. Not in the original. A shop a routine just closed
+    still shows its corner for a moment (40 ms after the click, live 2026-11-17), and a click on the X tab of a
+    closing shop leaves a dark panel that takes every click until Escape (no buys for 55 minutes on 2026-10-23):
+    so the shop gets 500 ms to go by itself first."""
+    deadline = game.now() + 500
+    while game.pixel_search(807, 140, 807, 155, 0xFFFFFF, quiet=True):  # the shop's corner, as in Shop.open_shop
+        if game.now() > deadline:
+            game.click(1244, 712)
+            return True
+        game.sleep(10)
+    return False
+
+
+def close_panel(game: Game) -> None:
+    """Click the ascension panel's X tab (as CollectMinion does) and wait up to 1 s for the panel to go. Not in
+    the original: 38 ms after a close, auto_ascend still saw the closing panel's X tab, clicked the Ascension tab
+    into nothing and waited 2 s (2026-11-16 21:07:44). The panel is gone within ~100 ms."""
+    game.click(570, 694)
+    deadline = game.now() + 1000
+    while game.pixel_is(538, 681, PANEL_X_RED, quiet=True) and game.now() <= deadline:
+        game.sleep(10)
+
+
 def open_ascension_tab(game: Game) -> bool:
     """Open the ascension panel on its Ascension tab and wait up to 2 s for the Ascend button; click
     once more if it doesn't show. Not in the original, which slept 400 ms after each click: on
     2026-10-25 the click that reopened the panel 21 ms after the bonus sample closed it was lost.
     The ascension button is clicked only while the panel is closed: on the tree tab, (95, 90) is the
     "Buy on Click" toggle, which would make any later click in the tree buy a node."""
+    # Not in the original: with the shop open the ascension button does nothing (the bot started with the user's
+    # shop open on 2026-11-12, and its minions visit waited 2 x 2 s for nothing).
+    if close_shop(game):
+        game.sleep(300)
     for attempt in range(2):
         if attempt:
             event("Shop click retried", target="ascension")

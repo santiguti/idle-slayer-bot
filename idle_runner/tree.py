@@ -1,7 +1,8 @@
 """Buy Ascension Tree nodes in the user's order. Not in the original (user's request, 2026-10-26).
 
 Measured 2026-10-26: the tree keeps its last pan and zoom, but at
-its minimum zoom every node is always at the same place, so the routine zooms all the way out first.
+its minimum zoom it is centred, so the routine zooms all the way out first and then finds where the tree is
+(it moves when more of it shows: find_layout).
 Clicking a node ("Buy on Click" off) opens a modal whose pixel at (468, 571) tells its state: green = Buy
 (the prerequisites are met, not necessarily the SP), red = one wide button, "Can't buy yet" (a
 prerequisite is missing) or "Close" (bought); the wider text tells them apart, in English and Spanish.
@@ -24,9 +25,10 @@ from pathlib import Path
 
 import numpy as np
 
-from idle_runner.actions import PANEL_X_RED, TAB_SELECTED, open_ascension_tab
+from idle_runner.actions import PANEL_X_RED, TAB_SELECTED, close_panel, open_ascension_tab
 from idle_runner.game import Game
 from idle_runner.log import event
+from idle_runner.png import read_png
 from idle_runner.state import load_state, update_state
 from idle_runner.tree_nodes import NODES
 
@@ -42,25 +44,50 @@ TOOLTIP_BG = (0x26, 0x26, 0x26)
 SP_ICON = (0x6A, 0x31, 0xCA)
 COST_GREEN = (0x11, 0xAA, 0x23)
 COST_RED = (0xAD, 0x11, 0x11)
-LINK = (0xDA, 0x00, 0xAE)  # the links between nodes (2026-10-28)
 TOP_SLACK = 371  # the "top" layout pans 371 px either way from where it was surveyed (2026-10-28)
+# Normalised correlation (`locate`) where the layout is: 0.49-1.00 for "min" on 17 recorded trees (old and new
+# place, few or all nodes bought, some dimmed by a modal), 0.66-1.00 for "top" on 4; at most 0.06 on 26 frames
+# without the tree, and 0.25 for "top" out of reach.
+MATCH = 0.4
 
 
-def links(game: Game) -> np.ndarray:
-    """How many link pixels each column of the tree shows (client x 16-619, under the header)."""
-    return (game.grab(24, 136, 627, 650) == LINK).all(axis=2).sum(axis=0)
+def edges(rgb: np.ndarray) -> np.ndarray:
+    """How sharply the brightness changes at each pixel (one row and one column fewer than `rgb`)."""
+    grey = rgb.astype(float).mean(axis=2)
+    return np.abs(np.diff(grey, axis=0))[:, :-1] + np.abs(np.diff(grey, axis=1))[:-1, :]
 
 
-def pan_shift(before: np.ndarray, after: np.ndarray) -> int | None:
-    """How far right the tree moved between two `links` profiles; None if no shift makes them match. At the
-    right shift they matched 0.91-0.96 on six recorded pairs (2026-10-28)."""
-    n, best, best_score = len(before), None, 0.8
-    for shift in range(-450, 451):  # at least 154 columns in common
-        a, b = (before[:n - shift], after[shift:]) if shift >= 0 else (before[-shift:], after[:n + shift])
-        score = np.minimum(a, b).sum() / max(1, np.maximum(a, b).sum())
-        if score > best_score:
-            best, best_score = shift, score
-    return best
+def locate(image: np.ndarray, template: np.ndarray) -> tuple[int, int, float]:
+    """Where `template` matches `image` best (both 2-D): the x, y of its top-left corner and the normalised
+    correlation there (1: identical up to brightness and contrast). The correlation of every place at once
+    comes from an FFT, each place's own brightness from running sums."""
+    th, tw = template.shape
+    h, w = image.shape
+    t = template - template.mean()
+    t /= max(float(np.linalg.norm(t)), 1e-9)  # a blank template matches nothing
+    corr = np.fft.irfft2(np.fft.rfft2(image) * np.conj(np.fft.rfft2(t, (h, w))), (h, w))[:h - th + 1, :w - tw + 1]
+
+    def window_sums(a: np.ndarray) -> np.ndarray:
+        c = np.pad(a, ((1, 0), (1, 0))).cumsum(axis=0).cumsum(axis=1)
+        return c[th:, tw:] - c[:-th, tw:] - c[th:, :-tw] + c[:-th, :-tw]
+
+    spread = window_sums(image ** 2) - window_sums(image) ** 2 / t.size
+    ncc = corr / np.sqrt(np.maximum(spread, 1e-9))
+    y, x = np.unravel_index(ncc.argmax(), ncc.shape)
+    return int(x), int(y), float(ncc[y, x])
+
+
+# Where each layout is on screen moves when more of the tree shows (2026-11-17: no click hit a node after an
+# Ultra Ascension). At minimum zoom the tree is centred: it showed 15 px left and 7 up after the Ultra Ascension
+# node was bought (between 2026-10-30 and 11-04). The "top" layout rests against the tree's top edge, which
+# moved up: its nodes showed 50 px lower. So each layout is found on screen (find_layout) from a piece of it,
+# cut where NODES were surveyed: tree_min.png from a frame of 2026-11-17 (where the tree was then),
+# tree_top.png from tests/fixtures/tree/top.png (as surveyed, 2026-10-28).
+HERE = Path(__file__).parent
+LAYOUTS = {  # name: (the piece's edges, its AutoIt top-left corner where surveyed, how far to look either way)
+    "min": (edges(read_png(HERE / "tree_min.png")), (118, 191), 50),
+    "top": (edges(read_png(HERE / "tree_top.png")), (158, 181), 100),
+}
 
 
 class Tree:
@@ -74,14 +101,15 @@ class Tree:
             if isinstance(remembered, list) else []
         # Nodes seen locked ("Can't buy yet") since the last purchase: only a purchase unlocks a node.
         self.layout = "min"  # the tree's zoom (Node.layout), set by show_layout
-        self.top_dx: int | None = None  # how far right of its surveyed place the "top" layout is; None: not found
+        # How far right and down of where it was surveyed each layout was found; None: not found.
+        self.offset: dict[str, tuple[int, int] | None] = {}
         self.locked: set[str] = set()
 
     def buy(self) -> None:
         """Buy nodes in the order until one can't be bought. Leaves the panel open: the runner sends the minions
         right after, and send_minions closes it (reopening it at once was lost on every start, 2026-10-28)."""
         if not self.open_tree():
-            self.game.click(570, 694)  # close the panel (its X tab, as CollectMinion does)
+            close_panel(self.game)
             return
         if self.bought and not self.still_bought(self.bought[-1]):
             event("Tree memory cleared", node=self.bought[-1])
@@ -101,15 +129,13 @@ class Tree:
         update_state(self.state, tree_bought=self.bought)
 
     def point(self, name: str) -> tuple[int, int] | None:
-        """Where the node is in the layout on screen; None in a "top" layout that wasn't found."""
-        node = NODES[name]
-        if node.layout != "top":
-            return node.point
-        return None if self.top_dx is None else (node.point[0] + self.top_dx, node.point[1])
+        """Where the node is on screen; None in a layout that wasn't found."""
+        (x, y), offset = NODES[name].point, self.offset.get(NODES[name].layout)
+        return None if offset is None else (x + offset[0], y + offset[1])
 
     def still_bought(self, name: str) -> bool:
         """Open the node's modal and close it again, never pressing Buy: True if it shows bought (or can't be
-        checked: a "top" layout that wasn't found keeps the memory)."""
+        checked: a layout that wasn't found keeps the memory)."""
         node = NODES[name]
         if node.layout != self.layout:
             self.show_layout(node.layout)
@@ -123,43 +149,53 @@ class Tree:
         return state == "bought"
 
     def show_layout(self, layout: str) -> None:
-        """Zoom the tree to one of its two layouts (Node.layout). "min": all the way out, where every node
-        has a fixed place (2026-10-26). "top": from there 3 notches in at the same spot, then dragged to the top
-        edge, and it shows the rows the header covers at minimum zoom. Its height is fixed, its sideways place
-        is measured (find_top_layout). Dragging doesn't move the tree at minimum zoom."""
+        """Zoom the tree to one of its two layouts (Node.layout) and find where it is (find_layout). "min": all
+        the way out, where the tree is centred; dragging doesn't move it. "top": from there 3 notches in at the
+        same spot, then dragged to the top edge, and it shows the rows the header covers at minimum zoom. The
+        zoom keeps the tree's column under the pointer in place, so it lands sideways if the game saw the
+        pointer elsewhere (126 px right once on Windows, 2026-10-28): it is panned against its left edge and
+        dragged back to about where it was surveyed, 371 px left. Inertia took it 14 and 25 px past the drag
+        (live, 2026-10-28): the drag is 20 px short."""
         g = self.game
         g.move(328, 411)  # over the tree
         g.wheel(up=False, notches=20)  # minimum zoom: 10 notches were already enough
-        g.sleep(600)  # measured: settled 0.6 s after the wheel
+        # Measured: settled 0.6 s after the wheel. The pointer stays over the tree meanwhile: moved off it at
+        # once, the zoom was sometimes lost (the minimum zoom not found 3 times in 5, live 2026-11-17).
+        g.sleep(600)
         if layout == "top":
             g.wheel(up=True, notches=3)
             g.sleep(600)
             for _ in range(3):  # inertia is ~30 px: the third drag ends against the top edge
                 g.drag(328, 200, 328, 620)
                 g.sleep(400)
-            self.top_dx = self.find_top_layout()
+            for _ in range(3):  # 420 px each: the left edge from anywhere
+                g.drag(100, 400, 520, 400)
+                g.sleep(400)
+            g.drag(80 + TOP_SLACK, 400, 100, 400)
+        self.offset[layout] = self.find_layout(layout)
         self.layout = layout
 
-    def find_top_layout(self) -> int | None:
-        """How far right of its surveyed place the "top" layout is, or None. The zoom keeps the tree's column
-        under the pointer in place, so the layout lands sideways if the game saw the pointer elsewhere: 126 px
-        right once on Windows (2026-10-28), and the click on Ancient Quests hit empty space. Its left edge is a
-        fixed place, 371 px right of the surveyed layout: pan the tree there, drag it back and measure where
-        it came to rest. Inertia took it 14 and 25 px past the drag (live, 2026-10-28): the drag is 20 px short."""
+    def find_layout(self, layout: str) -> tuple[int, int] | None:
+        """How far right and down of where it was surveyed the layout shows (its piece in LAYOUTS, looked for
+        around its corner), or None if it doesn't within 2 s. Waits until no tooltip covers the tree (the pointer
+        off it) and the tree has stopped: two equal reads 200 ms apart. It usually stops 0.6 s after the wheel,
+        but once it wasn't found after 0.8 s, and it can match well where it is still moving: 5 px low at 0.3 s
+        (live, 2026-11-17)."""
         g = self.game
-        for _ in range(3):  # 420 px each: the left edge from anywhere
-            g.drag(100, 400, 520, 400)
-            g.sleep(400)
-        edge = self.links_at_rest()
-        g.drag(80 + TOP_SLACK, 400, 100, 400)
-        moved = pan_shift(edge, self.links_at_rest())
-        return None if moved is None else TOP_SLACK + moved
-
-    def links_at_rest(self) -> np.ndarray:
-        """`links` once the tree has stopped and no tooltip covers it (the pointer off the tree)."""
-        self.game.move(900, 400)
-        self.game.sleep(800)
-        return links(self.game)
+        g.move(900, 400)
+        g.sleep(800)
+        piece, (x, y), slack = LAYOUTS[layout]
+        h, w = piece.shape
+        deadline, last = g.now() + 2000, None
+        while True:
+            dx, dy, match = locate(edges(g.grab(x - slack, y - slack, x + w + slack, y + h + slack)), piece)
+            found = (dx - slack, dy - slack) if match >= MATCH else None
+            if found is not None and found == last:
+                return found
+            if g.now() > deadline:
+                return None
+            last = found
+            g.sleep(200)
 
     def open_tree(self) -> bool:
         g = self.game

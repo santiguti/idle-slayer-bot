@@ -4,11 +4,12 @@ import numpy as np
 import pytest
 
 from idle_runner.state import load_state, update_state
-from idle_runner.tree import Tree, links, pan_shift
+from idle_runner.tree import HERE, LAYOUTS, Tree
 from idle_runner.tree_nodes import NODES, RECOMMENDED_ORDER
 from tests.fakes import OFFSET, read_png
 
 FIXTURES = Path(__file__).parent / "fixtures" / "tree"
+MIN_PIECE = read_png(HERE / "tree_min.png")
 
 ORDER = [(n, NODES[n].point) for n in RECOMMENDED_ORDER]
 
@@ -77,6 +78,8 @@ class FakeTree:
             self.fake.paint(260, 480, 0x58188D)
         elif (x, y) == (205, 696):
             self.fake.paint(158, 676, 0x5E261B)  # tree tab selected
+            (x0, y0), (h, w) = LAYOUTS["min"][1], MIN_PIECE.shape[:2]
+            self.fake.frame[y0 - OFFSET[1]:y0 - OFFSET[1] + h, x0 - OFFSET[0]:x0 - OFFSET[0] + w] = MIN_PIECE
         elif (x, y) == (570, 694):
             self.panel_open = False
             self.fake.frame[:] = 0  # panel closed
@@ -339,31 +342,25 @@ def test_a_locked_node_is_logged(game, fake, events) -> None:
 def show_tree(fake, name: str) -> None:
     """A tree tab recorded in the "top" layout (client x 0-639): "top" where it was surveyed (Linux, 2026-10-28
     21:51), "top-left-edge" panned against its left edge, "top-windows" right as surveyed and "top-windows-126"
-    126 px right of it (Windows, 21:29 and 21:15)."""
+    126 px right of it (Windows, 21:29 and 21:15). "top-after-ua": dragged back from its left edge right after an
+    Ultra Ascension, few nodes bought, in a tree grown since it was surveyed (Linux, 2026-11-17)."""
     fake.frame[:, :640] = read_png(FIXTURES / f"{name}.png")
 
 
-@pytest.mark.parametrize(("before", "after", "shift"), [("top", "top-left-edge", 371), ("top-left-edge", "top", -371),
-                                                        ("top-windows", "top-windows-126", 126),
-                                                        ("top", "top-windows", 0)])
-def test_measures_how_far_the_tree_panned_on_recorded_frames(game, fake, before: str, after: str,
-                                                              shift: int) -> None:
-    show_tree(fake, before)
-    first = links(game)
-    show_tree(fake, after)
-
-    assert pan_shift(first, links(game)) == shift
+@pytest.mark.parametrize(("frame", "offset"), [("top", (0, 0)), ("top-windows", (0, 0)), ("top-after-ua", (-4, 50))])
+def test_the_top_layout_is_found_where_the_tree_shows_it(game, fake, frame: str, offset) -> None:
+    # The top layout rests against the tree's top edge, which moved up as the tree grew: 50 px lower on 2026-11-17.
+    show_tree(fake, frame)
+    assert Tree(game, ()).find_layout("top") == offset
 
 
-def test_no_links_measure_no_pan(game, fake) -> None:
-    show_tree(fake, "top")
-    first = links(game)
-    fake.frame[:] = 0
-
-    assert pan_shift(first, links(game)) is None
+@pytest.mark.parametrize("frame", ["top-windows-126", "top-left-edge"])
+def test_a_top_layout_out_of_reach_is_not_found_anywhere_else(game, fake, frame: str) -> None:
+    show_tree(fake, frame)
+    assert Tree(game, ()).find_layout("top") is None
 
 
-def test_the_top_layout_is_found_from_its_left_edge(game, fake) -> None:
+def test_the_top_layout_is_found_after_panning_against_its_left_edge(game, fake) -> None:
     # Dragged right it rests against its left edge, 371 px right of the surveyed layout; dragged 371 px back,
     # inertia takes it 14 px further (live, 2026-10-28).
     edge, top = (read_png(FIXTURES / f"{name}.png") for name in ("top-left-edge", "top"))
@@ -378,21 +375,23 @@ def test_the_top_layout_is_found_from_its_left_edge(game, fake) -> None:
             fake.frame[:, :640] = edge if fake.pointer[0] > presses[-1][0] else back
 
     fake.on_action = pan
-    assert Tree(game, ()).find_top_layout() == -14
+    tree = Tree(game, ())
+    tree.show_layout("top")
+    assert tree.offset["top"] == (-14, 0)
 
 
 def test_nodes_under_the_header_are_clicked_where_the_top_layout_was_found(game, fake, monkeypatch) -> None:
     FakeTree(fake)
-    monkeypatch.setattr(Tree, "find_top_layout", lambda self: 126)
+    monkeypatch.setattr(Tree, "find_layout", lambda self, layout: (0, 0) if layout == "min" else (-4, 50))
     Tree(game, ("Ancient Quests",)).buy()
 
     x, y = NODES["Ancient Quests"].point
-    assert (x + 126, y) in fake.clicks() and (x, y) not in fake.clicks()
+    assert (x - 4, y + 50) in fake.clicks() and (x, y) not in fake.clicks()
 
 
 def test_nothing_is_clicked_in_a_top_layout_that_was_not_found(game, fake, monkeypatch, events) -> None:
     FakeTree(fake)
-    monkeypatch.setattr(Tree, "find_top_layout", lambda self: None)
+    monkeypatch.setattr(Tree, "find_layout", lambda self, layout: (0, 0) if layout == "min" else None)
     Tree(game, ("Ancient Quests", "Village Key")).buy()
 
     assert nodes_clicked(fake) == []
@@ -403,7 +402,7 @@ def test_nothing_is_clicked_in_a_top_layout_that_was_not_found(game, fake, monke
 def test_nodes_under_the_header_are_bought_from_the_top_layout(game, fake, monkeypatch) -> None:
     # At minimum zoom the header covers the top rows; 3 notches in and dragged to the top they show (2026-10-26).
     FakeTree(fake)
-    monkeypatch.setattr(Tree, "find_top_layout", lambda self: 0)
+    monkeypatch.setattr(Tree, "find_layout", lambda self, layout: (0, 0))
     Tree(game, ("Ancient Quests", "Village Key")).buy()
 
     actions = fake.actions
@@ -415,6 +414,54 @@ def test_nodes_under_the_header_are_bought_from_the_top_layout(game, fake, monke
     assert NODES["Ancient Quests"].layout == "top" and NODES["Village Key"].layout == "min"
     assert zoom_in < quests < key
     assert any(a == ("button", 5, True) for a in actions[quests:key])  # back to minimum zoom first
+
+
+@pytest.mark.parametrize(("frame", "offset"), [("min-old-layout", (0, 0)), ("min-new-layout", (-15, -7))])
+def test_the_minimum_zoom_layout_is_found_where_the_tree_shows_it(game, fake, frame: str, offset) -> None:
+    # The tree centres itself at minimum zoom, so it moves when more of it shows: 15 px left and 7 up after
+    # the Ultra Ascension node was bought (frames of 2026-10-26, few nodes bought, and 2026-11-04, all bought).
+    fake.frame[:, :640] = read_png(FIXTURES / f"{frame}.png")
+    assert Tree(game, ()).find_layout("min") == offset
+
+
+def test_a_layout_is_taken_once_it_stopped_moving(game, fake) -> None:
+    # Zooming out from the "top" layout, the tree still showed 5 px low 300 ms after the wheel (live, 2026-11-17).
+    frame = read_png(FIXTURES / "min-new-layout.png")
+    fake.frame[5:, :640] = frame[:-5]
+    settled_at = fake.t + 1000  # between find_layout's first read (800 ms) and its second
+    grab = fake.grab
+
+    def settling(x: int, y: int, w: int, h: int):
+        if fake.t >= settled_at:
+            fake.frame[:, :640] = frame
+        return grab(x, y, w, h)
+
+    fake.grab = settling
+    assert Tree(game, ()).find_layout("min") == (-15, -7)
+
+
+@pytest.mark.parametrize("layout", ["min", "top"])
+def test_no_tree_no_layout(game, fake, layout: str) -> None:
+    assert Tree(game, ()).find_layout(layout) is None
+
+
+def test_nodes_are_clicked_where_the_minimum_zoom_layout_was_found(game, fake, monkeypatch) -> None:
+    FakeTree(fake)
+    monkeypatch.setattr(Tree, "find_layout", lambda self, layout: (-15, -7))
+    Tree(game, ("Village Key",)).buy()
+
+    x, y = NODES["Village Key"].point
+    assert (x - 15, y - 7) in fake.clicks() and (x, y) not in fake.clicks()
+
+
+def test_nothing_is_clicked_in_a_minimum_zoom_layout_that_was_not_found(game, fake, monkeypatch, events) -> None:
+    FakeTree(fake)
+    monkeypatch.setattr(Tree, "find_layout", lambda self, layout: None)
+    Tree(game, ("Village Key", "Idle Earrings I")).buy()
+
+    assert nodes_clicked(fake) == []
+    assert [(r["node"], r["reason"]) for r in events() if r["event"] == "Tree stopped"] == [
+        ("Village Key", "layout not found")]
 
 
 def test_every_node_point_is_clear_of_the_header_and_the_tab_bar() -> None:

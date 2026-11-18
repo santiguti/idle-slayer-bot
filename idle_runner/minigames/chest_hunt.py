@@ -137,7 +137,9 @@ def chest_hunt(game: Game, no_lockpicking: bool, perfect: bool, no_reinforced: b
         if game.pixel_is(457, 439, 0xF68F37):
             perfect_found = True
             game.click(457, 439)
-        if attempts > 200:
+        # Not in the original: after a perfect hunt the bonus chests open by themselves for ~14 s (2026-11-12
+        # and 11-16), past the 10 s below; there is no grid left to click, so wait for Close.
+        if attempts > 200 and not perfect_found:
             event("Chsthunt  Blocked divinity  X, Start Again ")  # exact text of ChestHunt.au3, typos included
             game.save_frame("chesthunt-blocked")
             process_grid(game, saver, no_lockpicking, perfect, no_reinforced)

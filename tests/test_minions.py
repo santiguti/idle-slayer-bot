@@ -209,9 +209,13 @@ def test_a_box_during_the_earned_text_cuts_the_visit_short_at_once(game, fake, m
     claim_panel = fake.on_action
     claimed_at: list[float] = []
 
+    closed_at: list[float] = []
+
     def act(action: tuple) -> None:
         if action[0] == "click" and in_button((action[1] + OFFSET[0], action[2] + OFFSET[1]), WHITE_KNIGHT):
             claimed_at.append(fake.t)
+        if action == ("click", 570 - 8, 694 - 31):
+            closed_at.append(fake.t)
         claim_panel(action)
 
     fake.on_action = act
@@ -220,9 +224,38 @@ def test_a_box_during_the_earned_text_cuts_the_visit_short_at_once(game, fake, m
     visit = send_minions(game)
 
     assert visit.box and sent == []  # the White Knight was claimed, then the visit ended
-    closed_at = next(a for a in reversed(fake.actions) if a[0] == "click")
-    assert closed_at == ("click", 570 - 8, 694 - 31)
-    assert fake.t - claimed_at[0] < 1000 + 2 * minions.BOX_POLL_MS
+    last_click = next(a for a in reversed(fake.actions) if a[0] == "click")
+    assert last_click == ("click", 570 - 8, 694 - 31)
+    assert closed_at[-1] - claimed_at[0] < 1000 + 2 * minions.BOX_POLL_MS
+
+
+def test_claims_below_a_claim_are_taken_without_waiting_for_its_earned_text(game, fake, monkeypatch) -> None:
+    # The "N earned" text floats up over the rows above the claim, never below (live 2026-11-03): five claims
+    # waited 2.5 s each (12.5 s of a 15.8 s visit, 2026-11-12 18:12). Only the sends wait for it.
+    sent = play_minions_tab(fake, monkeypatch, available=526)
+    send_panel = fake.on_action
+    clicked: dict[int, list[float]] = {WHITE_KNIGHT: [], DARK_WIZARD: []}
+
+    def act(action: tuple) -> None:
+        click = (action[1] + OFFSET[0], action[2] + OFFSET[1]) if action[0] == "click" else None
+        for top, times in clicked.items():
+            if click and in_button(click, top):
+                times.append(fake.t)
+                if fake.frame[top - 31, 430][1] == 0xA6:  # a claim: it turns into "Send on Mission"
+                    fake.paint(410, top, 0x541787, w=29, h=123)
+                    return
+        send_panel(action)
+        if action == ("click", 332 - 8, 680 - 31):
+            for top in clicked:
+                fake.paint(410, top, 0x11A622, w=29, h=123)
+
+    fake.on_action = act
+    send_minions(game)
+
+    (knight_claim, knight_send), (wizard_claim, wizard_send) = clicked[WHITE_KNIGHT], clicked[DARK_WIZARD]
+    assert wizard_claim - knight_claim < 500
+    assert knight_send - wizard_claim >= EARNED_TEXT_MS
+    assert sent == [10, 150]
 
 
 def test_a_claim_without_effect_is_not_clicked_again(game, fake, monkeypatch, event_names) -> None:

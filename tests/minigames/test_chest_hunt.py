@@ -75,3 +75,30 @@ def test_blocked_end_screen_logs_the_original_text_and_opens_the_grid_again(game
 
     assert len(grids) == 2
     assert "Chsthunt  Blocked divinity  X, Start Again " in event_names()  # typos as in ChestHunt.au3:56
+
+
+def test_a_perfect_hunt_bonus_is_waited_for_not_taken_for_a_blocked_grid(game, fake, event_names,
+                                                                          monkeypatch) -> None:
+    # 2026-11-12/16: after all 29 chests the game shows three bonus chests and opens them (~16 s from the
+    # last chest to Close); the 10 s limit ran out meanwhile, so every perfect hunt logged "Blocked" and
+    # clicked the grid again.
+    grids = []
+    monkeypatch.setattr(chest_hunt_module, "process_grid", lambda *args: grids.append(args))
+    sleep = fake.sleep_ms
+    start = fake.t
+
+    def timeline(ms: float) -> None:
+        sleep(ms)
+        if fake.t - start > 2_000 and not fake.clicks():
+            fake.paint(457, 439, 0xF68F37)  # the bonus chests show
+        elif fake.clicks():
+            fake.paint(457, 439, 0)
+            if fake.t - start > 16_000:
+                fake.paint(550, 694, 0xAF0000)  # Close, once the three are open
+
+    monkeypatch.setattr(fake, "sleep_ms", timeline)
+    chest_hunt(game, no_lockpicking=False, perfect=True, no_reinforced=False)
+
+    assert len(grids) == 1
+    assert "Chsthunt  Blocked divinity  X, Start Again " not in event_names()
+    assert "Perfect ChestHunt Completed" in event_names()

@@ -1,12 +1,12 @@
 """Test doubles shared by the test suite."""
-import struct
 import time
-import zlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
+
+from idle_runner.png import read_png  # noqa: F401  (the tests import it from here)
 
 OFFSET = (8, 31)  # AutoIt window-frame offset used by every test
 
@@ -108,12 +108,3 @@ class FakeJumper:
 
     def stop(self) -> None:
         self.stopped = True
-
-
-def read_png(path: Path) -> np.ndarray:
-    """Read a PNG written by idle_runner.png.write_png (8-bit RGB, filter 0 on every row)."""
-    data = path.read_bytes()
-    width, height = struct.unpack(">II", data[16:24])
-    raw = zlib.decompress(data[data.index(b"IDAT") + 4:data.index(b"IEND") - 8])
-    rows = np.frombuffer(raw, dtype=np.uint8).reshape(height, 1 + width * 3)
-    return rows[:, 1:].reshape(height, width, 3).copy()

@@ -5,6 +5,16 @@ needs something from you or drops something (a config that no longer loads, a pl
 adds something new (a feature, a setting, a minigame the bot plays differently), and a **patch** version (2.6.1) only
 fixes what was already there. From v2.6.0 on, every version below has a git tag with its name.
 
+## Unreleased
+
+### Fixed
+- **The Ascension Tree: no node found after an Ultra Ascension.** The tree grows when more of it shows (here, after the Ultra Ascension node was bought), and the bot clicked where each node used to be: at the smallest zoom the tree moved 15 px left and 7 up, and the top rows, which the bot zooms in to reach, showed 50 px lower. Every click landed between nodes ("Tree stopped at Village Key: no modal"). The bot now finds where the tree is on screen before clicking, whichever nodes are bought.
+- **The bot could spend an hour opening and closing the shop.** The shop button also glows for the shop's "⋮" tab, not only for quests to claim. On 2026-11-12 the bot opened the shop every 2 seconds for 55 minutes, found nothing to claim and closed it again, with the character standing still about two thirds of the time. After a visit with nothing to claim, the glow is now ignored for a minute.
+- **Minions: claims waited 2.5 seconds each.** After a claim the game floats an "N earned" text up over the rows above it, so the bot waited for it before reading the list. The text never covers the rows below, so the claims below are now taken at once, and only the sends wait. A visit that claimed five minions took 15.8 seconds; it now takes about half.
+- **Lost seconds around the Ascension panel.** A routine that opened the panel right after another one closed it saw the closing panel as open, clicked a tab into nothing and waited 2 seconds; a routine now waits for the panel to close. With the shop open the panel doesn't open at all (a start with the shop left open lost the first minions visit): the shop is now closed first.
+- **Shop: no click on the X of a closing shop.** A shop that was just closed still shows for a moment, and a click on its X then could leave a dark panel that blocks every click. The bot now lets a closing shop finish before closing it.
+- **Perfect chest hunts no longer look "blocked".** After all 29 chests the game opens three bonus chests by itself, which takes longer than the bot waited; it then logged "Blocked" and clicked the grid again. It now waits for the Close button.
+
 ## v2.7.0 (2026-11-16)
 
 ### New

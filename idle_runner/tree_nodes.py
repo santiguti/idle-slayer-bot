@@ -1,7 +1,7 @@
 """Every Ascension Tree node the bot knows, as data (the click points were surveyed 2026-10-26).
 
 `point` is the node's centre in its layout (`layout`: the tree's minimum zoom, or Tree.show_layout's "top"), in
-AutoIt coordinates; `cost` is in SP as the game shows it ("150 M" is 150_000_000). The order of `NODES` is the
+AutoIt coordinates, where it was surveyed (Tree measures how far each layout is from there); `cost` is in SP as the game shows it ("150 M" is 150_000_000). The order of `NODES` is the
 recommended buying order, `RECOMMENDED_ORDER`: the wiki's order, which doesn't follow the tree's links.
 """
 from typing import NamedTuple
